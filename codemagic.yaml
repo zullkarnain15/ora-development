@@ -1,0 +1,41 @@
+workflows:
+  ios-validation:
+    name: ORA iOS Validation
+    instance_type: mac_mini_m2
+    max_build_duration: 60
+
+    environment:
+      flutter: 3.47.0
+      xcode: latest
+      cocoapods: default
+
+    cache:
+      cache_paths:
+        - $FLUTTER_ROOT/.pub-cache
+        - $HOME/Library/Caches/CocoaPods
+        - $CM_BUILD_DIR/ora_flutter/ios/Pods
+
+    scripts:
+      - name: Get Flutter dependencies
+        script: |
+          cd "$CM_BUILD_DIR/ora_flutter"
+          flutter pub get
+
+      - name: Analyze Flutter source
+        script: |
+          cd "$CM_BUILD_DIR/ora_flutter"
+          flutter analyze
+
+      - name: Run Flutter tests
+        script: |
+          cd "$CM_BUILD_DIR/ora_flutter"
+          flutter test
+
+      - name: Build iOS release without code signing
+        script: |
+          cd "$CM_BUILD_DIR/ora_flutter"
+          flutter build ios --release --no-codesign
+
+    artifacts:
+      - ora_flutter/build/ios/iphoneos/*.app
+      - /tmp/xcodebuild_logs/*.log
