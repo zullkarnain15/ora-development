@@ -1,0 +1,6 @@
+# Markdown uses two trailing spaces for intentional hard line breaks.
+*.md whitespace=-blank-at-eol
+
+# Keep shell scripts executable-friendly across platforms.
+*.sh text eol=lf
+gradlew text eol=lf

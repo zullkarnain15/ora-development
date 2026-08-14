@@ -1,0 +1,39 @@
+# Generated build outputs
+**/build/
+**/.gradle/
+**/.kotlin/
+**/.dart_tool/
+**/.pub-cache/
+**/.flutter-plugins-dependencies
+**/coverage/
+*.apk
+*.aab
+*.symbols
+*.map.json
+
+# Local IDE and machine configuration
+**/.idea/
+**/.vscode/
+*.iml
+**/local.properties
+**/Generated.xcconfig
+**/flutter_export_environment.sh
+
+# Credentials and production signing material
+.env
+.env.*
+!.env.example
+**/key.properties
+*.jks
+*.keystore
+*.p12
+*.mobileprovision
+**/service-account*.json
+**/credentials*.json
+
+# Operating system files
+.DS_Store
+Thumbs.db
+
+# Workspace-only source assets
+ICON/

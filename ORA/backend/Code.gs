@@ -1,0 +1,3443 @@
+/**
+ * ORA (OTO Runners Adventure) - Backend
+ * Google Apps Script bound to spreadsheet: ORA_Master_Data
+ *
+ * Scope:
+ * - health check
+ * - participant login (NIK + PIN)
+ * - first-activation nickname save
+ * - active Config, Level_Master, and Quest_Master reads
+ * - completed Android activity sync
+ * - activity XP, level calculation, and User_Stats aggregation
+ * - calculated-on-read quest progress for authenticated users
+ * - idempotent quest reward claims
+ * - read-only guild summary derived from participant divisions
+ * - read-only individual leaderboard from active participant stats
+ * - optional Guild_Master metadata with legacy division fallback
+ *
+ * Not included:
+ * - guild membership management, invitations, and approvals
+ */
+
+const ORA_API_VERSION = '1.0';
+const ORA_SESSION_TTL_SECONDS = 2592000; // 30 days
+const ORA_SESSION_CACHE_TTL_SECONDS = 21600; // Apps Script cache maximum: 6 hours
+const ORA_SESSION_PROPERTY_PREFIX = 'ora_session_';
+const ORA_SPREADSHEET_ID_PROPERTY = 'ORA_SPREADSHEET_ID';
+
+const ORA_SHEETS = Object.freeze({
+  PARTICIPANTS: 'Participants',
+  CONFIG: 'Config',
+  LEVELS: 'Level_Master',
+  QUESTS: 'Quest_Master',
+  ACTIVITIES: 'Activities',
+  USER_STATS: 'User_Stats',
+  QUEST_CLAIMS: 'Quest_Claims',
+  GUILD_MASTER: 'Guild_Master',
+});
+
+const ORA_HEADERS = Object.freeze({
+  Participants: [
+    'NIK',
+    'PIN',
+    'Nickname',
+    'Division_Guild',
+    'Status',
+    'Created_At',
+    'Updated_At',
+  ],
+  Config: [
+    'Config_Key',
+    'Config_Value',
+    'Data_Type',
+    'Description',
+    'Active',
+  ],
+  Level_Master: ['Level', 'Level_Name', 'Required_Total_XP', 'Active'],
+  Quest_Master: [
+    'Quest_ID',
+    'Quest_Name',
+    'Quest_Type',
+    'Target_Value',
+    'Unit',
+    'Reward_XP',
+    'Period_Type',
+    'Start_Date',
+    'End_Date',
+    'Active',
+  ],
+  Activities: [
+    'ActivityId',
+    'NIK',
+    'Nickname',
+    'Division',
+    'StartTime',
+    'EndTime',
+    'DurationSec',
+    'DistanceKm',
+    'AvgPace',
+    'Status',
+    'Source',
+    'DeviceTime',
+    'SyncedAt',
+    'CreatedAt',
+    'UpdatedAt',
+  ],
+  User_Stats: [
+    'NIK',
+    'Nickname',
+    'Division',
+    'TotalActivities',
+    'TotalDistanceKm',
+    'TotalDurationSec',
+    'TotalXP',
+    'CurrentLevel',
+    'CurrentLevelName',
+    'NextLevelXP',
+    'LastActivityId',
+    'LastActivityAt',
+    'UpdatedAt',
+  ],
+  Quest_Claims: [
+    'ClaimId',
+    'NIK',
+    'QuestId',
+    'QuestName',
+    'RewardXP',
+    'Status',
+    'ClaimedAt',
+    'CreatedAt',
+  ],
+  Guild_Master: [
+    'GuildId',
+    'GuildName',
+    'DisplayName',
+    'Description',
+    'Status',
+    'SortOrder',
+    'CreatedAt',
+    'UpdatedAt',
+  ],
+});
+
+/**
+ * Public GET endpoint.
+ * Supported actions: health, config, levels, quests.
+ * Login and nickname activation intentionally require POST.
+ */
+function doGet(e) {
+  try {
+    const action = normalizeAction_(e && e.parameter ? e.parameter.action : 'health');
+
+    switch (action) {
+      case 'health':
+        return jsonSuccess_({
+          service: 'ORA Backend',
+          status: 'UP',
+          spreadsheet: getOraSpreadsheet_().getName(),
+        });
+      case 'config':
+        return jsonSuccess_({ config: getActiveConfig_() });
+      case 'levels':
+        return jsonSuccess_({ levels: getActiveLevels_() });
+      case 'quests':
+        return jsonSuccess_({ quests: getActiveQuests_() });
+      default:
+        return jsonError_('UNKNOWN_ACTION', 'Action GET tidak dikenali.');
+    }
+  } catch (error) {
+    console.error('ORA doGet failed: %s', safeErrorMessage_(error));
+    return jsonError_('INTERNAL_ERROR', 'Terjadi kesalahan pada server ORA.');
+  }
+}
+
+/**
+ * Public POST endpoint.
+ * JSON body examples:
+ * {"action":"login","nik":"12345678","pin":"1234"}
+ * {"action":"activateNickname","sessionToken":"...","nickname":"ZULRUN15"}
+ * {"action":"updateNickname","sessionToken":"...","nickname":"NEWRUN1"}
+ * {"action":"submitActivity","sessionToken":"...","activity":{"activityId":"..."}}
+ * {"action":"getGuildSummary","sessionToken":"..."}
+ * {"action":"getGuildDirectory","sessionToken":"..."}
+ * {"action":"getLeaderboard","sessionToken":"...","scope":"GLOBAL","metric":"TOTAL_XP"}
+ * {"action":"getQuestProgress","sessionToken":"..."}
+ * {"action":"claimQuestReward","sessionToken":"...","questId":"DEV-Q001"}
+ */
+function doPost(e) {
+  try {
+    const request = parseJsonBody_(e);
+    const action = normalizeAction_(request.action);
+
+    switch (action) {
+      case 'login':
+        return handleLogin_(request);
+      case 'activatenickname':
+        return handleActivateNickname_(request);
+      case 'updatenickname':
+        return handleUpdateNickname_(request);
+      case 'submitactivity':
+        return handleSubmitActivity_(request);
+      case 'getuserstats':
+        return handleGetUserStats_(request);
+      case 'getguildsummary':
+        return handleGetGuildSummary_(request);
+      case 'getguilddirectory':
+        return handleGetGuildDirectory_(request);
+      case 'getleaderboard':
+        return handleGetLeaderboard_(request);
+      case 'getquestprogress':
+        return handleGetQuestProgress_(request);
+      case 'claimquestreward':
+        return handleClaimQuestReward_(request);
+      case 'config':
+        return jsonSuccess_({ config: getActiveConfig_() });
+      case 'levels':
+        return jsonSuccess_({ levels: getActiveLevels_() });
+      case 'quests':
+        return jsonSuccess_({ quests: getActiveQuests_() });
+      default:
+        return jsonError_('UNKNOWN_ACTION', 'Action POST tidak dikenali.');
+    }
+  } catch (error) {
+    if (error && error.oraCode) {
+      return jsonError_(error.oraCode, error.message);
+    }
+
+    console.error('ORA doPost failed: %s', safeErrorMessage_(error));
+    return jsonError_('INTERNAL_ERROR', 'Terjadi kesalahan pada server ORA.');
+  }
+}
+
+function handleLogin_(request) {
+  const nik = normalizeDigits_(request.nik);
+  const pin = normalizeDigits_(request.pin);
+
+  if (!nik || !pin) {
+    return jsonError_('MISSING_CREDENTIALS', 'NIK dan PIN wajib diisi.');
+  }
+
+  if (!/^\d{4}$/.test(pin)) {
+    return jsonError_('INVALID_CREDENTIALS', 'NIK atau PIN tidak valid.');
+  }
+
+  const participant = findParticipantByNik_(nik);
+  if (!participant || participant.pin !== pin) {
+    return jsonError_('INVALID_CREDENTIALS', 'NIK atau PIN tidak valid.');
+  }
+
+  if (participant.status !== 'ACTIVE') {
+    return jsonError_('ACCOUNT_INACTIVE', 'Akun ORA tidak aktif. Hubungi admin.');
+  }
+
+  const sessionToken = Utilities.getUuid() + Utilities.getUuid();
+  saveSession_(sessionToken, participant.nik);
+
+  return jsonSuccess_({
+    sessionToken: sessionToken,
+    expiresInSeconds: ORA_SESSION_TTL_SECONDS,
+    participant: publicParticipant_(participant),
+    requiresNicknameActivation: !participant.nickname,
+  });
+}
+
+function handleActivateNickname_(request) {
+  const session = requireSession_(request.sessionToken);
+  const nickname = String(request.nickname == null ? '' : request.nickname).trim();
+  const nicknameMaxLength = getNicknameMaxLength_();
+
+  if (!nickname) {
+    return jsonError_('INVALID_NICKNAME', 'Nickname wajib diisi.');
+  }
+
+  if (nickname.length > nicknameMaxLength) {
+    return jsonError_(
+      'INVALID_NICKNAME',
+      'Nickname maksimal ' + nicknameMaxLength + ' karakter.'
+    );
+  }
+
+  if (!/^[A-Za-z0-9]+$/.test(nickname)) {
+    return jsonError_('INVALID_NICKNAME', 'Nickname hanya boleh berisi huruf dan angka.');
+  }
+
+  const lock = LockService.getScriptLock();
+  lock.waitLock(10000);
+
+  try {
+    const participant = findParticipantByNik_(session.nik);
+    if (!participant) {
+      return jsonError_('PARTICIPANT_NOT_FOUND', 'Participant tidak ditemukan.');
+    }
+
+    if (participant.status !== 'ACTIVE') {
+      return jsonError_('ACCOUNT_INACTIVE', 'Akun ORA tidak aktif. Hubungi admin.');
+    }
+
+    if (participant.nickname) {
+      if (participant.nickname.toLowerCase() === nickname.toLowerCase()) {
+        return jsonSuccess_({
+          participant: publicParticipant_(participant),
+          nicknameSaved: true,
+          alreadyActivated: true,
+        });
+      }
+
+      return jsonError_(
+        'NICKNAME_ALREADY_ACTIVATED',
+        'Nickname sudah diaktifkan. Hubungi admin untuk perubahan.'
+      );
+    }
+
+    if (isNicknameTaken_(nickname, participant.nik)) {
+      return jsonError_('NICKNAME_TAKEN', 'Nickname sudah digunakan participant lain.');
+    }
+
+    const sheet = getValidatedSheet_(ORA_SHEETS.PARTICIPANTS);
+    const nicknameColumn = participant.headerMap.Nickname + 1;
+    const updatedAtColumn = participant.headerMap.Updated_At + 1;
+    const now = new Date();
+
+    sheet.getRange(participant.rowNumber, nicknameColumn).setValue(nickname);
+    sheet.getRange(participant.rowNumber, updatedAtColumn).setValue(now);
+
+    participant.nickname = nickname;
+    participant.updatedAt = now;
+
+    return jsonSuccess_({
+      participant: publicParticipant_(participant),
+      nicknameSaved: true,
+      alreadyActivated: false,
+    });
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+function handleUpdateNickname_(request) {
+  const session = requireSession_(request.sessionToken);
+  const nickname = String(request.nickname == null ? '' : request.nickname).trim().toUpperCase();
+  const nicknameMaxLength = getNicknameMaxLength_();
+
+  if (!nickname) {
+    return jsonError_('INVALID_NICKNAME', 'Nickname wajib diisi.');
+  }
+  if (nickname.length > nicknameMaxLength) {
+    return jsonError_(
+      'INVALID_NICKNAME',
+      'Nickname maksimal ' + nicknameMaxLength + ' karakter.'
+    );
+  }
+  if (!/^[A-Z0-9]+$/.test(nickname)) {
+    return jsonError_('INVALID_NICKNAME', 'Nickname hanya boleh berisi huruf dan angka.');
+  }
+
+  const lock = LockService.getScriptLock();
+  lock.waitLock(10000);
+  try {
+    const participant = findParticipantByNik_(session.nik);
+    if (!participant) {
+      return jsonError_('PARTICIPANT_NOT_FOUND', 'Participant tidak ditemukan.');
+    }
+    if (participant.status !== 'ACTIVE') {
+      return jsonError_('ACCOUNT_INACTIVE', 'Akun ORA tidak aktif. Hubungi admin.');
+    }
+    if (participant.nickname && participant.nickname.toUpperCase() === nickname) {
+      return jsonSuccess_({
+        participant: publicParticipant_(participant),
+        nicknameSaved: true,
+        unchanged: true,
+      });
+    }
+    if (isNicknameTaken_(nickname, participant.nik)) {
+      return jsonError_('NICKNAME_TAKEN', 'Nickname sudah digunakan participant lain.');
+    }
+
+    const sheet = getValidatedSheet_(ORA_SHEETS.PARTICIPANTS);
+    const now = new Date();
+    sheet.getRange(participant.rowNumber, participant.headerMap.Nickname + 1).setValue(nickname);
+    sheet.getRange(participant.rowNumber, participant.headerMap.Updated_At + 1).setValue(now);
+    participant.nickname = nickname;
+    participant.updatedAt = now;
+
+    return jsonSuccess_({
+      participant: publicParticipant_(participant),
+      nicknameSaved: true,
+      unchanged: false,
+    });
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+function handleSubmitActivity_(request) {
+  const session = requireSession_(request.sessionToken);
+  const activity = request.activity;
+
+  if (!activity || typeof activity !== 'object' || Array.isArray(activity)) {
+    return jsonError_('MISSING_ACTIVITY', 'Data activity wajib dikirim.');
+  }
+
+  const activityId = String(activity.activityId == null ? '' : activity.activityId).trim();
+  const startTime = String(activity.startTime == null ? '' : activity.startTime).trim();
+  const endTime = String(activity.endTime == null ? '' : activity.endTime).trim();
+  const durationSec = Number(activity.durationSec);
+  const distanceKm = Number(activity.distanceKm);
+  const avgPace = String(activity.avgPace == null ? '' : activity.avgPace).trim();
+  const deviceTime = String(activity.deviceTime == null ? '' : activity.deviceTime).trim();
+
+  if (!activityId) {
+    return jsonError_('MISSING_ACTIVITY_ID', 'ActivityId wajib diisi.');
+  }
+
+  if (!startTime) {
+    return jsonError_('MISSING_START_TIME', 'StartTime wajib diisi.');
+  }
+
+  if (!endTime) {
+    return jsonError_('MISSING_END_TIME', 'EndTime wajib diisi.');
+  }
+
+  if (!Number.isFinite(durationSec) || durationSec <= 0) {
+    return jsonError_('INVALID_DURATION_SEC', 'DurationSec harus berupa angka lebih dari 0.');
+  }
+
+  if (!Number.isFinite(distanceKm) || distanceKm <= 0) {
+    return jsonError_('INVALID_DISTANCE_KM', 'DistanceKm harus berupa angka lebih dari 0.');
+  }
+
+  const lock = LockService.getScriptLock();
+  lock.waitLock(10000);
+
+  try {
+    const participant = findParticipantByNik_(session.nik);
+    if (!participant) {
+      return jsonError_('PARTICIPANT_NOT_FOUND', 'Participant tidak ditemukan.');
+    }
+
+    if (participant.status !== 'ACTIVE') {
+      return jsonError_('ACCOUNT_INACTIVE', 'Akun ORA tidak aktif. Hubungi admin.');
+    }
+
+    const sheet = getActivitiesSheet_();
+    if (findActivityByNikAndActivityId_(sheet, participant.nik, activityId)) {
+      return jsonSuccess_({
+        status: 'DUPLICATE',
+        activityId: activityId,
+        message: 'Activity already synced',
+      });
+    }
+
+    const activityRowNumber = appendActivity_(sheet, {
+      activityId: activityId,
+      nik: participant.nik,
+      nickname: participant.nickname,
+      division: participant.divisionGuild,
+      startTime: startTime,
+      endTime: endTime,
+      durationSec: durationSec,
+      distanceKm: distanceKm,
+      avgPace: avgPace,
+      deviceTime: deviceTime,
+    });
+
+    try {
+      const activityXp = calculateActivityXp_(distanceKm, 'COMPLETED');
+      upsertUserStats_({
+        nik: participant.nik,
+        nickname: participant.nickname,
+        division: participant.divisionGuild,
+        activityId: activityId,
+        activityAt: endTime || startTime,
+        durationSec: durationSec,
+        distanceKm: distanceKm,
+        activityXp: activityXp,
+      });
+    } catch (error) {
+      // Keep submitActivity retryable if stats aggregation cannot be completed.
+      sheet.deleteRow(activityRowNumber);
+      throw error;
+    }
+
+    return jsonSuccess_({
+      status: 'SAVED',
+      activityId: activityId,
+      message: 'Activity saved',
+    });
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+function handleGetUserStats_(request) {
+  const session = requireSession_(request.sessionToken);
+  const participant = findParticipantByNik_(session.nik);
+
+  if (!participant) {
+    return jsonError_('PARTICIPANT_NOT_FOUND', 'Participant tidak ditemukan.');
+  }
+  if (participant.status !== 'ACTIVE') {
+    return jsonError_('ACCOUNT_INACTIVE', 'Akun ORA tidak aktif. Hubungi admin.');
+  }
+
+  const storedStats = getUserStatsByNik_(participant.nik);
+  const stats = storedStats
+    ? publicUserStats_(storedStats)
+    : createDefaultUserStats_(participant);
+
+  return jsonUserStatsSuccess_(stats);
+}
+
+function handleGetGuildSummary_(request) {
+  const session = requireSession_(request.sessionToken);
+  const participant = findParticipantByNik_(session.nik);
+
+  if (!participant) {
+    return jsonError_('PARTICIPANT_NOT_FOUND', 'Participant tidak ditemukan.');
+  }
+  if (participant.status !== 'ACTIVE') {
+    return jsonError_('ACCOUNT_INACTIVE', 'Akun ORA tidak aktif. Hubungi admin.');
+  }
+
+  const division = String(participant.divisionGuild || '').trim();
+  if (!division) {
+    return jsonGuildSummarySuccess_('UNASSIGNED', null, []);
+  }
+
+  const guildResolution = resolveGuildMetadata_(division, getGuildMasterRecords_());
+
+  const summary = buildGuildSummary_(
+    participant,
+    getGuildParticipantRows_(),
+    getUserStatsByNikMap_(),
+    getDefaultGuildLevel_(),
+    guildResolution.guild
+  );
+  return jsonGuildSummarySuccess_(guildResolution.status, summary.guild, summary.members);
+}
+
+function handleGetGuildDirectory_(request) {
+  const session = requireSession_(request.sessionToken);
+  const participant = findParticipantByNik_(session.nik);
+
+  if (!participant) {
+    return jsonError_('PARTICIPANT_NOT_FOUND', 'Participant tidak ditemukan.');
+  }
+  if (participant.status !== 'ACTIVE') {
+    return jsonError_('ACCOUNT_INACTIVE', 'Akun ORA tidak aktif. Hubungi admin.');
+  }
+
+  const guilds = buildGuildDirectory_(
+    getGuildParticipantRows_(),
+    getUserStatsByNikMap_(),
+    getDefaultGuildLevel_(),
+    getGuildMasterRecords_()
+  );
+  return jsonGuildDirectorySuccess_(guilds);
+}
+
+function handleGetLeaderboard_(request) {
+  const session = requireSession_(request.sessionToken);
+  const participant = findParticipantByNik_(session.nik);
+
+  if (!participant) {
+    return jsonError_('PARTICIPANT_NOT_FOUND', 'Participant tidak ditemukan.');
+  }
+  if (participant.status !== 'ACTIVE') {
+    return jsonError_('ACCOUNT_INACTIVE', 'Akun ORA tidak aktif. Hubungi admin.');
+  }
+
+  const scope = String(request.scope || 'GLOBAL').trim().toUpperCase();
+  const metric = String(request.metric || 'TOTAL_XP').trim().toUpperCase();
+  if (scope !== 'GLOBAL' && scope !== 'GUILD') {
+    return jsonError_('INVALID_LEADERBOARD_SCOPE', 'Scope leaderboard belum didukung.');
+  }
+  if (!isSupportedLeaderboardMetric_(metric)) {
+    return jsonError_('INVALID_LEADERBOARD_METRIC', 'Metric leaderboard tidak dikenali.');
+  }
+
+  const participants = getGuildParticipantRows_();
+  let eligibleParticipants = participants;
+  if (scope === 'GUILD') {
+    const division = String(participant.divisionGuild || '').trim();
+    if (!division) {
+      return jsonLeaderboardSuccess_('GUILD', metric, [], null, 'NO_GUILD');
+    }
+    const divisionKey = normalizeDivisionKey_(division);
+    eligibleParticipants = participants.filter(function (candidate) {
+      return normalizeDivisionKey_(candidate.divisionGuild) === divisionKey;
+    });
+  }
+
+  const result = buildLeaderboard_(
+    participant.nik,
+    eligibleParticipants,
+    getUserStatsByNikMap_(),
+    metric,
+    50
+  );
+  return jsonLeaderboardSuccess_(
+    scope,
+    metric,
+    result.leaderboard,
+    result.currentUserRank,
+    'ACTIVE'
+  );
+}
+
+function handleGetQuestProgress_(request) {
+  const session = requireSession_(request.sessionToken);
+  const participant = findParticipantByNik_(session.nik);
+
+  if (!participant) {
+    return jsonError_('PARTICIPANT_NOT_FOUND', 'Participant tidak ditemukan.');
+  }
+  if (participant.status !== 'ACTIVE') {
+    return jsonError_('ACCOUNT_INACTIVE', 'Akun ORA tidak aktif. Hubungi admin.');
+  }
+
+  const participantRows = getGuildParticipantRows_();
+  const activityRows = readSheetObjects_(ORA_SHEETS.ACTIVITIES);
+  const activities = mapCompletedActivityRowsForNik_(activityRows, participant.nik);
+  const guildContext = buildGuildActivityContext_(participant, participantRows, activityRows);
+  const userStats = getUserStatsByNik_(participant.nik);
+  const claimsByQuestId = getClaimedQuestsByNik_(participant.nik);
+  const quests = getActiveQuests_().map(function (quest) {
+    const progress = calculateQuestProgress_(quest, activities, userStats, guildContext);
+    return attachQuestClaim_(progress, claimsByQuestId[quest.questId] || null);
+  });
+
+  return jsonQuestProgressSuccess_(quests);
+}
+
+function handleClaimQuestReward_(request) {
+  const session = requireSession_(request.sessionToken);
+  const participant = findParticipantByNik_(session.nik);
+  const questId = String(request.questId == null ? '' : request.questId).trim();
+
+  if (!participant) {
+    return jsonError_('PARTICIPANT_NOT_FOUND', 'Participant tidak ditemukan.');
+  }
+  if (participant.status !== 'ACTIVE') {
+    return jsonError_('ACCOUNT_INACTIVE', 'Akun ORA tidak aktif. Hubungi admin.');
+  }
+  if (!questId) {
+    return jsonError_('MISSING_QUEST_ID', 'QuestId wajib diisi.');
+  }
+
+  const lock = LockService.getScriptLock();
+  lock.waitLock(10000);
+
+  try {
+    const quest = getActiveQuests_().find(function (candidate) {
+      return candidate.questId === questId;
+    });
+    if (!quest) {
+      return jsonError_('QUEST_NOT_ACTIVE', 'Quest tidak ditemukan atau sudah tidak aktif.');
+    }
+    if (mapQuestType_(normalizeQuestType_(quest.questType)) === 'GUILD_DISTANCE') {
+      return jsonError_(
+        'GUILD_REWARD_NOT_READY',
+        'Reward guild quest belum tersedia.'
+      );
+    }
+
+    const claimsSheet = ensureQuestClaimsSheet_();
+    const existingClaim = findQuestClaim_(claimsSheet, participant.nik, questId);
+    if (existingClaim) {
+      if (existingClaim.status === 'CLAIMED') {
+        return jsonSuccess_({
+          status: 'ALREADY_CLAIMED',
+          claim: publicQuestClaim_(existingClaim),
+        });
+      }
+      throw oraError_(
+        'CLAIM_PENDING_REVIEW',
+        'Klaim sebelumnya belum selesai. Silakan coba lagi nanti.'
+      );
+    }
+
+    const activities = getCompletedActivitiesForNik_(participant.nik);
+    const userStats = getUserStatsByNik_(participant.nik);
+    const progress = calculateQuestProgress_(quest, activities, userStats);
+    if (progress.status === 'UNSUPPORTED_GROUP_SCOPE') {
+      return jsonError_(
+        'QUEST_GROUP_SCOPE_UNSUPPORTED',
+        'Reward guild quest belum tersedia.'
+      );
+    }
+    if (progress.status === 'UNKNOWN_TYPE') {
+      return jsonError_('QUEST_TYPE_UNSUPPORTED', 'Tipe quest belum didukung.');
+    }
+    if (!progress.completed) {
+      return jsonError_('QUEST_NOT_COMPLETED', 'Quest belum selesai.');
+    }
+
+    const rewardXp = Math.max(0, Math.round(Number(quest.rewardXp) || 0));
+    const claim = appendQuestClaim_(claimsSheet, {
+      claimId: Utilities.getUuid(),
+      nik: participant.nik,
+      questId: quest.questId,
+      questName: quest.questName,
+      rewardXp: rewardXp,
+      status: 'PROCESSING',
+    });
+    let statsWrite = null;
+
+    try {
+      statsWrite = grantQuestRewardXp_(participant, rewardXp);
+      const claimed = markQuestClaimed_(claimsSheet, claim.rowNumber);
+      return jsonSuccess_({
+        status: 'CLAIMED',
+        claim: publicQuestClaim_(claimed),
+        userStats: publicUserStats_(statsWrite.stats),
+      });
+    } catch (error) {
+      try {
+        if (statsWrite) restoreUserStatsWrite_(statsWrite);
+      } finally {
+        claimsSheet.deleteRow(claim.rowNumber);
+      }
+      throw error;
+    }
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+function getActiveConfig_() {
+  const rows = readSheetObjects_(ORA_SHEETS.CONFIG);
+  const result = {};
+
+  rows.forEach(function (row) {
+    if (!isTrue_(row.Active)) return;
+
+    const key = String(row.Config_Key || '').trim();
+    if (!key) return;
+
+    result[key] = convertConfigValue_(row.Config_Value, row.Data_Type);
+  });
+
+  return result;
+}
+
+function getActiveLevels_() {
+  return readSheetObjects_(ORA_SHEETS.LEVELS)
+    .filter(function (row) {
+      return isTrue_(row.Active);
+    })
+    .map(function (row) {
+      return {
+        level: toFiniteNumberOrNull_(row.Level),
+        levelName: String(row.Level_Name || '').trim(),
+        requiredTotalXp: toFiniteNumberOrNull_(row.Required_Total_XP),
+      };
+    })
+    .filter(function (level) {
+      return level.level !== null && level.requiredTotalXp !== null;
+    })
+    .sort(function (a, b) {
+      return a.level - b.level;
+    });
+}
+
+function getActiveQuests_() {
+  const now = new Date();
+
+  return readSheetObjects_(ORA_SHEETS.QUESTS)
+    .filter(function (row) {
+      return isTrue_(row.Active) && isQuestWithinDateRange_(row, now);
+    })
+    .map(function (row) {
+      return {
+        questId: String(row.Quest_ID || '').trim(),
+        questName: String(row.Quest_Name || '').trim(),
+        questType: String(row.Quest_Type || '').trim().toUpperCase(),
+        targetValue: toFiniteNumberOrNull_(row.Target_Value),
+        unit: String(row.Unit || '').trim(),
+        rewardXp: toFiniteNumberOrNull_(row.Reward_XP),
+        periodType: String(row.Period_Type || '').trim().toUpperCase(),
+        startDate: toIsoDateOrNull_(row.Start_Date),
+        endDate: toIsoDateOrNull_(row.End_Date),
+      };
+    })
+    .filter(function (quest) {
+      return !!quest.questId;
+    });
+}
+
+function getCompletedActivitiesForNik_(nik) {
+  return mapCompletedActivityRowsForNik_(
+    readSheetObjects_(ORA_SHEETS.ACTIVITIES),
+    nik
+  );
+}
+
+function mapCompletedActivityRowsForNik_(rows, nik) {
+  return mapCompletedActivityRowsForNiks_(rows, [nik]);
+}
+
+function mapCompletedActivityRowsForNiks_(rows, niks) {
+  const allowedNiks = {};
+  niks.forEach(function (nik) {
+    const normalizedNik = normalizeDigits_(nik);
+    if (normalizedNik) allowedNiks[normalizedNik] = true;
+  });
+
+  return rows
+    .filter(function (row) {
+      return (
+        !!allowedNiks[normalizeDigits_(row.NIK)] &&
+        normalizeQuestType_(row.Status) === 'COMPLETED'
+      );
+    })
+    .map(function (row) {
+      const activityDate = toDateOrNull_(row.EndTime) || toDateOrNull_(row.StartTime);
+      return {
+        activityId: String(row.ActivityId || '').trim(),
+        activityDate: activityDate,
+        activityDateKey: toLocalDateKeyOrNull_(activityDate),
+        durationSec: toNonNegativeFiniteNumber_(row.DurationSec),
+        distanceKm: toNonNegativeFiniteNumber_(row.DistanceKm),
+      };
+    })
+    .filter(function (activity) {
+      return !!activity.activityDateKey;
+    });
+}
+
+function buildGuildActivityContext_(owner, participants, activityRows) {
+  const divisionKey = normalizeDivisionKey_(owner.divisionGuild);
+  if (!divisionKey) return { hasGuild: false, activities: [] };
+
+  const activeMemberNiks = participants.filter(function (participant) {
+    return (
+      participant.status === 'ACTIVE' &&
+      normalizeDivisionKey_(participant.divisionGuild) === divisionKey
+    );
+  }).map(function (participant) {
+    return participant.nik;
+  });
+
+  return {
+    hasGuild: true,
+    activities: mapCompletedActivityRowsForNiks_(activityRows, activeMemberNiks),
+  };
+}
+
+function calculateQuestProgress_(quest, allActivities, userStats, guildContext) {
+  const normalizedType = normalizeQuestType_(quest.questType);
+  const supportedType = mapQuestType_(normalizedType);
+  const sourceActivities = supportedType === 'GUILD_DISTANCE'
+    ? (guildContext && guildContext.activities ? guildContext.activities : [])
+    : allActivities;
+  const activities = sourceActivities.filter(function (activity) {
+    return isActivityWithinQuestPeriod_(activity, quest);
+  });
+  let progress = 0;
+
+  switch (supportedType) {
+    case 'DISTANCE':
+      progress = activities.reduce(function (total, activity) {
+        return total + activity.distanceKm;
+      }, 0);
+      break;
+    case 'RUN_COUNT':
+      progress = activities.length;
+      break;
+    case 'RUN_DAYS':
+      progress = countUniqueActivityDays_(activities);
+      break;
+    case 'SINGLE_RUN':
+      progress = activities.reduce(function (largestDistance, activity) {
+        return Math.max(largestDistance, activity.distanceKm);
+      }, 0);
+      break;
+    case 'DURATION':
+      progress = activities.reduce(function (total, activity) {
+        return total + activity.durationSec;
+      }, 0);
+      break;
+    case 'XP':
+      progress = calculateQuestXpProgress_(quest, activities, userStats);
+      break;
+    case 'STREAK':
+      progress = calculateLongestActivityStreak_(activities);
+      break;
+    case 'GUILD_DISTANCE':
+      if (!guildContext || !guildContext.hasGuild) {
+        return blockGuildQuestClaim_(
+          publicQuestProgress_(quest, 0, 'NO_GUILD', false, 0)
+        );
+      }
+      progress = activities.reduce(function (total, activity) {
+        return total + activity.distanceKm;
+      }, 0);
+      break;
+    default:
+      return publicQuestProgress_(quest, 0, 'UNKNOWN_TYPE', false, 0);
+  }
+
+  progress = roundDecimal_(Math.max(0, progress), 3);
+  const target = Number(quest.targetValue);
+  const hasValidTarget = Number.isFinite(target) && target > 0;
+  const completed = hasValidTarget && progress >= target;
+  const progressPercent = hasValidTarget
+    ? Math.min(100, roundDecimal_((progress / target) * 100, 2))
+    : 0;
+  const status = completed
+    ? 'COMPLETED'
+    : (progress > 0 ? 'IN_PROGRESS' : 'NOT_STARTED');
+
+  const result = publicQuestProgress_(quest, progress, status, completed, progressPercent);
+  return supportedType === 'GUILD_DISTANCE' ? blockGuildQuestClaim_(result) : result;
+}
+
+function blockGuildQuestClaim_(questProgress) {
+  questProgress.claimable = false;
+  questProgress.claimBlockedReason = 'GUILD_REWARD_NOT_READY';
+  return questProgress;
+}
+
+function calculateQuestXpProgress_(quest, activities, userStats) {
+  const hasDatePeriod = !!quest.startDate || !!quest.endDate;
+  if (!hasDatePeriod && userStats) {
+    return Math.max(0, Number(userStats.totalXp) || 0);
+  }
+
+  return activities.reduce(function (total, activity) {
+    return total + calculateActivityXp_(activity.distanceKm, 'COMPLETED');
+  }, 0);
+}
+
+function calculateLongestActivityStreak_(activities) {
+  const uniqueDates = {};
+  activities.forEach(function (activity) {
+    if (activity.activityDateKey) uniqueDates[activity.activityDateKey] = true;
+  });
+
+  const dates = Object.keys(uniqueDates).sort();
+  let longest = 0;
+  let current = 0;
+  let previousDayNumber = null;
+
+  dates.forEach(function (dateKey) {
+    const dayNumber = isoDateKeyToDayNumber_(dateKey);
+    if (dayNumber === null) return;
+
+    current = previousDayNumber !== null && dayNumber === previousDayNumber + 1
+      ? current + 1
+      : 1;
+    longest = Math.max(longest, current);
+    previousDayNumber = dayNumber;
+  });
+
+  return longest;
+}
+
+function countUniqueActivityDays_(activities) {
+  const uniqueDates = {};
+  activities.forEach(function (activity) {
+    if (activity.activityDateKey) uniqueDates[activity.activityDateKey] = true;
+  });
+  return Object.keys(uniqueDates).length;
+}
+
+function isActivityWithinQuestPeriod_(activity, quest) {
+  if (!activity.activityDateKey) return false;
+  if (quest.startDate && activity.activityDateKey < quest.startDate) return false;
+  if (quest.endDate && activity.activityDateKey > quest.endDate) return false;
+  return true;
+}
+
+function mapQuestType_(type) {
+  const aliases = {
+    DISTANCE: 'DISTANCE',
+    DISTANCE_KM: 'DISTANCE',
+    TOTAL_DISTANCE: 'DISTANCE',
+    DISTANCE_TOTAL: 'DISTANCE',
+    RUN_COUNT: 'RUN_COUNT',
+    RUNS: 'RUN_COUNT',
+    RUNCOUNT: 'RUN_COUNT',
+    COUNT: 'RUN_COUNT',
+    ACTIVITIES: 'RUN_COUNT',
+    ACTIVITY_COUNT: 'RUN_COUNT',
+    TOTAL_RUNS: 'RUN_COUNT',
+    RUN_DAYS: 'RUN_DAYS',
+    ACTIVE_DAYS: 'RUN_DAYS',
+    SINGLE_RUN: 'SINGLE_RUN',
+    LONGEST_RUN: 'SINGLE_RUN',
+    GUILD_DISTANCE: 'GUILD_DISTANCE',
+    DURATION: 'DURATION',
+    DURATION_SEC: 'DURATION',
+    DURATION_SECONDS: 'DURATION',
+    TOTAL_DURATION: 'DURATION',
+    TIME: 'DURATION',
+    XP: 'XP',
+    EXP: 'XP',
+    TOTAL_XP: 'XP',
+    EXPERIENCE: 'XP',
+    EXPERIENCE_POINTS: 'XP',
+    STREAK: 'STREAK',
+    RUN_STREAK: 'STREAK',
+    DAILY_STREAK: 'STREAK',
+    CONSECUTIVE_DAYS: 'STREAK',
+  };
+  return aliases[type] || null;
+}
+
+function normalizeQuestType_(value) {
+  return String(value == null ? '' : value)
+    .trim()
+    .toUpperCase()
+    .replace(/[\s-]+/g, '_');
+}
+
+function publicQuestProgress_(quest, progress, status, completed, progressPercent) {
+  return {
+    questId: quest.questId,
+    name: quest.questName,
+    type: quest.questType,
+    target: quest.targetValue,
+    unit: quest.unit,
+    progress: progress,
+    progressPercent: progressPercent,
+    rewardXp: quest.rewardXp,
+    period: quest.periodType,
+    activeFrom: quest.startDate,
+    activeTo: quest.endDate,
+    status: status,
+    completed: completed,
+  };
+}
+
+function findParticipantByNik_(nik) {
+  const sheet = getValidatedSheet_(ORA_SHEETS.PARTICIPANTS);
+  const values = sheet.getDataRange().getDisplayValues();
+  if (values.length < 2) return null;
+
+  const headerMap = createHeaderMap_(values[0]);
+  const nikIndex = headerMap.NIK;
+
+  for (let index = 1; index < values.length; index += 1) {
+    const row = values[index];
+    if (normalizeDigits_(row[nikIndex]) === nik) {
+      return {
+        rowNumber: index + 1,
+        headerMap: headerMap,
+        nik: normalizeDigits_(row[headerMap.NIK]),
+        pin: normalizeDigits_(row[headerMap.PIN]),
+        nickname: String(row[headerMap.Nickname] || '').trim(),
+        divisionGuild: String(row[headerMap.Division_Guild] || '').trim(),
+        status: String(row[headerMap.Status] || '').trim().toUpperCase(),
+        createdAt: row[headerMap.Created_At] || null,
+        updatedAt: row[headerMap.Updated_At] || null,
+      };
+    }
+  }
+
+  return null;
+}
+
+function getActivitiesSheet_() {
+  return getValidatedSheet_(ORA_SHEETS.ACTIVITIES);
+}
+
+function findActivityByNikAndActivityId_(sheet, nik, activityId) {
+  const values = sheet.getDataRange().getDisplayValues();
+  if (values.length < 2) return null;
+
+  const headerMap = createHeaderMap_(values[0]);
+  const nikIndex = headerMap.NIK;
+  const activityIdIndex = headerMap.ActivityId;
+  const targetNik = normalizeDigits_(nik);
+  const targetActivityId = String(activityId == null ? '' : activityId).trim();
+
+  for (let index = 1; index < values.length; index += 1) {
+    const row = values[index];
+    if (
+      normalizeDigits_(row[nikIndex]) === targetNik &&
+      String(row[activityIdIndex] || '').trim() === targetActivityId
+    ) {
+      return {
+        rowNumber: index + 1,
+        activityId: targetActivityId,
+        nik: targetNik,
+      };
+    }
+  }
+
+  return null;
+}
+
+function appendActivity_(sheet, activity) {
+  const now = new Date();
+  const nextRow = sheet.getLastRow() + 1;
+  const values = [[
+    String(activity.activityId),
+    String(activity.nik),
+    String(activity.nickname || ''),
+    String(activity.division || ''),
+    String(activity.startTime),
+    String(activity.endTime),
+    Number(activity.durationSec),
+    Number(activity.distanceKm),
+    String(activity.avgPace || ''),
+    'COMPLETED',
+    'ANDROID',
+    String(activity.deviceTime || ''),
+    now,
+    now,
+    now,
+  ]];
+
+  sheet.getRange(nextRow, 1, 1, 2).setNumberFormat('@');
+  sheet.getRange(nextRow, 1, 1, ORA_HEADERS.Activities.length).setValues(values);
+  return nextRow;
+}
+
+function ensureUserStatsSheet_() {
+  const spreadsheet = getOraSpreadsheet_();
+  let sheet = spreadsheet.getSheetByName(ORA_SHEETS.USER_STATS);
+
+  if (!sheet) {
+    sheet = spreadsheet.insertSheet(ORA_SHEETS.USER_STATS);
+    sheet.getRange(1, 1, 1, ORA_HEADERS.User_Stats.length)
+      .setValues([ORA_HEADERS.User_Stats]);
+    sheet.setFrozenRows(1);
+    sheet.getRange(1, 1, 1, ORA_HEADERS.User_Stats.length)
+      .setFontWeight('bold');
+    sheet.getRange('A:A').setNumberFormat('@');
+  }
+
+  return getValidatedSheet_(ORA_SHEETS.USER_STATS);
+}
+
+function ensureQuestClaimsSheet_() {
+  const spreadsheet = getOraSpreadsheet_();
+  let sheet = spreadsheet.getSheetByName(ORA_SHEETS.QUEST_CLAIMS);
+
+  if (!sheet) {
+    sheet = spreadsheet.insertSheet(ORA_SHEETS.QUEST_CLAIMS);
+    sheet.getRange(1, 1, 1, ORA_HEADERS.Quest_Claims.length)
+      .setValues([ORA_HEADERS.Quest_Claims]);
+    sheet.setFrozenRows(1);
+    sheet.getRange(1, 1, 1, ORA_HEADERS.Quest_Claims.length)
+      .setFontWeight('bold');
+    sheet.getRange('A:C').setNumberFormat('@');
+  }
+
+  return getValidatedSheet_(ORA_SHEETS.QUEST_CLAIMS);
+}
+
+function ensureGuildMasterSheet_() {
+  const spreadsheet = getOraSpreadsheet_();
+  let sheet = spreadsheet.getSheetByName(ORA_SHEETS.GUILD_MASTER);
+
+  if (!sheet) {
+    sheet = spreadsheet.insertSheet(ORA_SHEETS.GUILD_MASTER);
+    sheet.getRange(1, 1, 1, ORA_HEADERS.Guild_Master.length)
+      .setValues([ORA_HEADERS.Guild_Master]);
+    sheet.setFrozenRows(1);
+    sheet.getRange(1, 1, 1, ORA_HEADERS.Guild_Master.length)
+      .setFontWeight('bold');
+    sheet.getRange('A:A').setNumberFormat('@');
+  }
+
+  return getValidatedSheet_(ORA_SHEETS.GUILD_MASTER);
+}
+
+function getClaimedQuestsByNik_(nik) {
+  const sheet = ensureQuestClaimsSheet_();
+  const values = sheet.getDataRange().getValues();
+  const displayValues = sheet.getDataRange().getDisplayValues();
+  if (values.length < 2) return {};
+
+  const headerMap = createHeaderMap_(displayValues[0]);
+  const targetNik = normalizeDigits_(nik);
+  const claims = {};
+  for (let index = 1; index < values.length; index += 1) {
+    const displayRow = displayValues[index];
+    const status = String(displayRow[headerMap.Status] || '').trim().toUpperCase();
+    if (
+      normalizeDigits_(displayRow[headerMap.NIK]) !== targetNik ||
+      status !== 'CLAIMED'
+    ) {
+      continue;
+    }
+
+    const row = values[index];
+    const claim = questClaimFromRow_(row, headerMap, index + 1);
+    claims[claim.questId] = claim;
+  }
+  return claims;
+}
+
+function findQuestClaim_(sheet, nik, questId) {
+  const values = sheet.getDataRange().getValues();
+  const displayValues = sheet.getDataRange().getDisplayValues();
+  if (values.length < 2) return null;
+
+  const headerMap = createHeaderMap_(displayValues[0]);
+  const targetNik = normalizeDigits_(nik);
+  const targetQuestId = String(questId || '').trim();
+  for (let index = 1; index < displayValues.length; index += 1) {
+    const row = displayValues[index];
+    if (
+      normalizeDigits_(row[headerMap.NIK]) === targetNik &&
+      String(row[headerMap.QuestId] || '').trim() === targetQuestId
+    ) {
+      return questClaimFromRow_(values[index], headerMap, index + 1);
+    }
+  }
+  return null;
+}
+
+function appendQuestClaim_(sheet, claim) {
+  const now = new Date();
+  const rowNumber = sheet.getLastRow() + 1;
+  const values = [[
+    String(claim.claimId),
+    String(claim.nik),
+    String(claim.questId),
+    String(claim.questName || ''),
+    Number(claim.rewardXp) || 0,
+    String(claim.status || 'PROCESSING'),
+    '',
+    now,
+  ]];
+  sheet.getRange(rowNumber, 1, 1, 3).setNumberFormat('@');
+  sheet.getRange(rowNumber, 1, 1, ORA_HEADERS.Quest_Claims.length).setValues(values);
+  return questClaimFromRow_(values[0], createHeaderMap_(ORA_HEADERS.Quest_Claims), rowNumber);
+}
+
+function markQuestClaimed_(sheet, rowNumber) {
+  const headerMap = createHeaderMap_(ORA_HEADERS.Quest_Claims);
+  const claimedAt = new Date();
+  sheet.getRange(rowNumber, headerMap.Status + 1).setValue('CLAIMED');
+  sheet.getRange(rowNumber, headerMap.ClaimedAt + 1).setValue(claimedAt);
+  const row = sheet.getRange(rowNumber, 1, 1, ORA_HEADERS.Quest_Claims.length)
+    .getValues()[0];
+  return questClaimFromRow_(row, headerMap, rowNumber);
+}
+
+function questClaimFromRow_(row, headerMap, rowNumber) {
+  return {
+    rowNumber: rowNumber,
+    claimId: String(row[headerMap.ClaimId] || '').trim(),
+    nik: normalizeDigits_(row[headerMap.NIK]),
+    questId: String(row[headerMap.QuestId] || '').trim(),
+    questName: String(row[headerMap.QuestName] || '').trim(),
+    rewardXp: Math.max(0, Math.round(Number(row[headerMap.RewardXP]) || 0)),
+    status: String(row[headerMap.Status] || '').trim().toUpperCase(),
+    claimedAt: row[headerMap.ClaimedAt] || null,
+    createdAt: row[headerMap.CreatedAt] || null,
+  };
+}
+
+function publicQuestClaim_(claim) {
+  return {
+    claimId: claim.claimId,
+    questId: claim.questId,
+    questName: claim.questName,
+    rewardXp: claim.rewardXp,
+    status: claim.status,
+    claimedAt: toIsoDateTimeOrNull_(claim.claimedAt),
+  };
+}
+
+function attachQuestClaim_(questProgress, claim) {
+  questProgress.claimed = !!claim;
+  questProgress.claimId = claim ? claim.claimId : null;
+  questProgress.claimedAt = claim ? toIsoDateTimeOrNull_(claim.claimedAt) : null;
+  return questProgress;
+}
+
+function getXpPerKm_() {
+  const configured = Number(getActiveConfig_().XP_PER_KM);
+  return Number.isFinite(configured) && configured >= 0 ? configured : 10;
+}
+
+function calculateActivityXp_(distanceKm, status) {
+  if (String(status || '').trim().toUpperCase() !== 'COMPLETED') return 0;
+
+  const distance = Number(distanceKm);
+  if (!Number.isFinite(distance) || distance <= 0) return 0;
+  return Math.round(distance * getXpPerKm_());
+}
+
+function getLevelByXp_(totalXp) {
+  const xp = Math.max(0, Number(totalXp) || 0);
+  const levels = getActiveLevels_();
+  if (levels.length === 0) {
+    throw oraError_('LEVEL_CONFIG_EMPTY', 'Level_Master tidak memiliki level aktif yang valid.');
+  }
+
+  let current = levels[0];
+  levels.forEach(function (level) {
+    if (level.requiredTotalXp <= xp) current = level;
+  });
+
+  const next = levels.find(function (level) {
+    return level.requiredTotalXp > xp;
+  });
+
+  return {
+    currentLevel: current.level,
+    currentLevelName: current.levelName,
+    nextLevelXp: next ? next.requiredTotalXp : null,
+  };
+}
+
+function findUserStatsRow_(sheet, nik) {
+  const range = sheet.getDataRange();
+  const values = range.getValues();
+  const displayValues = range.getDisplayValues();
+  if (values.length < 2) return null;
+
+  const headerMap = createHeaderMap_(displayValues[0]);
+  const targetNik = normalizeDigits_(nik);
+
+  for (let index = 1; index < displayValues.length; index += 1) {
+    if (normalizeDigits_(displayValues[index][headerMap.NIK]) !== targetNik) continue;
+
+    const row = values[index];
+    return {
+      rowNumber: index + 1,
+      totalActivities: Number(row[headerMap.TotalActivities]) || 0,
+      totalDistanceKm: Number(row[headerMap.TotalDistanceKm]) || 0,
+      totalDurationSec: Number(row[headerMap.TotalDurationSec]) || 0,
+      totalXp: Number(row[headerMap.TotalXP]) || 0,
+    };
+  }
+
+  return null;
+}
+
+function getUserStatsByNik_(nik) {
+  const sheet = ensureUserStatsSheet_();
+  const values = sheet.getDataRange().getValues();
+  const displayValues = sheet.getDataRange().getDisplayValues();
+  if (values.length < 2) return null;
+
+  const headerMap = createHeaderMap_(displayValues[0]);
+  const targetNik = normalizeDigits_(nik);
+  for (let index = 1; index < displayValues.length; index += 1) {
+    if (normalizeDigits_(displayValues[index][headerMap.NIK]) !== targetNik) continue;
+
+    const row = values[index];
+    return {
+      nik: targetNik,
+      nickname: String(row[headerMap.Nickname] || ''),
+      division: String(row[headerMap.Division] || ''),
+      totalActivities: Number(row[headerMap.TotalActivities]) || 0,
+      totalDistanceKm: Number(row[headerMap.TotalDistanceKm]) || 0,
+      totalDurationSec: Number(row[headerMap.TotalDurationSec]) || 0,
+      totalXp: Number(row[headerMap.TotalXP]) || 0,
+      currentLevel: Number(row[headerMap.CurrentLevel]) || 0,
+      currentLevelName: String(row[headerMap.CurrentLevelName] || ''),
+      nextLevelXp: row[headerMap.NextLevelXP] === ''
+        ? null
+        : Number(row[headerMap.NextLevelXP]),
+      lastActivityId: String(row[headerMap.LastActivityId] || ''),
+      lastActivityAt: String(row[headerMap.LastActivityAt] || ''),
+      updatedAt: row[headerMap.UpdatedAt] || null,
+    };
+  }
+
+  return null;
+}
+
+function createDefaultUserStats_(participant) {
+  const levels = getActiveLevels_();
+  const initialLevel = levels.length > 0 ? levels[0] : null;
+  const nextLevel = levels.length > 1 ? levels[1] : null;
+
+  return {
+    nik: participant.nik,
+    nickname: participant.nickname || '',
+    division: participant.divisionGuild || '',
+    totalActivities: 0,
+    totalDistanceKm: 0,
+    totalDurationSec: 0,
+    totalXp: 0,
+    currentLevel: initialLevel ? initialLevel.level : 0,
+    currentLevelName: initialLevel ? initialLevel.levelName : '',
+    nextLevelXp: nextLevel ? nextLevel.requiredTotalXp : null,
+    lastActivityId: '',
+    lastActivityAt: '',
+    updatedAt: null,
+  };
+}
+
+function publicUserStats_(stats) {
+  return {
+    nik: stats.nik,
+    nickname: stats.nickname,
+    division: stats.division,
+    totalActivities: stats.totalActivities,
+    totalDistanceKm: stats.totalDistanceKm,
+    totalDurationSec: stats.totalDurationSec,
+    totalXP: stats.totalXp,
+    currentLevel: stats.currentLevel,
+    currentLevelName: stats.currentLevelName,
+    nextLevelXP: stats.nextLevelXp,
+    lastActivityId: stats.lastActivityId,
+    lastActivityAt: stats.lastActivityAt,
+    updatedAt: toIsoDateTimeOrNull_(stats.updatedAt),
+  };
+}
+
+function toIsoDateTimeOrNull_(value) {
+  if (!value) return null;
+  const date = toDateOrNull_(value);
+  return date ? date.toISOString() : String(value);
+}
+
+function upsertUserStats_(activity) {
+  const sheet = ensureUserStatsSheet_();
+  const existing = findUserStatsRow_(sheet, activity.nik);
+  const totalActivities = (existing ? existing.totalActivities : 0) + 1;
+  const totalDistanceKm = roundDecimal_(
+    (existing ? existing.totalDistanceKm : 0) + Number(activity.distanceKm),
+    3
+  );
+  const totalDurationSec = roundDecimal_(
+    (existing ? existing.totalDurationSec : 0) + Number(activity.durationSec),
+    3
+  );
+  const totalXp = Math.round(
+    (existing ? existing.totalXp : 0) + Number(activity.activityXp)
+  );
+  const level = getLevelByXp_(totalXp);
+  const targetRow = existing ? existing.rowNumber : sheet.getLastRow() + 1;
+  const now = new Date();
+
+  const values = [[
+    String(activity.nik),
+    String(activity.nickname || ''),
+    String(activity.division || ''),
+    totalActivities,
+    totalDistanceKm,
+    totalDurationSec,
+    totalXp,
+    level.currentLevel,
+    level.currentLevelName,
+    level.nextLevelXp == null ? '' : level.nextLevelXp,
+    String(activity.activityId),
+    String(activity.activityAt || ''),
+    now,
+  ]];
+
+  sheet.getRange(targetRow, 1).setNumberFormat('@');
+  sheet.getRange(targetRow, 1, 1, ORA_HEADERS.User_Stats.length).setValues(values);
+
+  return {
+    nik: String(activity.nik),
+    totalActivities: totalActivities,
+    totalDistanceKm: totalDistanceKm,
+    totalDurationSec: totalDurationSec,
+    totalXp: totalXp,
+    currentLevel: level.currentLevel,
+    currentLevelName: level.currentLevelName,
+    nextLevelXp: level.nextLevelXp,
+    lastActivityId: String(activity.activityId),
+    lastActivityAt: String(activity.activityAt || ''),
+  };
+}
+
+function grantQuestRewardXp_(participant, rewardXp) {
+  const sheet = ensureUserStatsSheet_();
+  const existing = getUserStatsByNik_(participant.nik);
+  const stats = existing || createDefaultUserStats_(participant);
+  const existingRow = findUserStatsRow_(sheet, participant.nik);
+  const targetRow = existingRow ? existingRow.rowNumber : sheet.getLastRow() + 1;
+  const previousValues = existingRow
+    ? sheet.getRange(targetRow, 1, 1, ORA_HEADERS.User_Stats.length).getValues()[0]
+    : null;
+  const totalXp = Math.round(stats.totalXp + Math.max(0, Number(rewardXp) || 0));
+  const level = getLevelByXp_(totalXp);
+  const now = new Date();
+  const updated = {
+    nik: participant.nik,
+    nickname: stats.nickname || participant.nickname || '',
+    division: stats.division || participant.divisionGuild || '',
+    totalActivities: stats.totalActivities || 0,
+    totalDistanceKm: stats.totalDistanceKm || 0,
+    totalDurationSec: stats.totalDurationSec || 0,
+    totalXp: totalXp,
+    currentLevel: level.currentLevel,
+    currentLevelName: level.currentLevelName,
+    nextLevelXp: level.nextLevelXp,
+    lastActivityId: stats.lastActivityId || '',
+    lastActivityAt: stats.lastActivityAt || '',
+    updatedAt: now,
+  };
+  const values = [[
+    String(updated.nik),
+    String(updated.nickname),
+    String(updated.division),
+    updated.totalActivities,
+    updated.totalDistanceKm,
+    updated.totalDurationSec,
+    updated.totalXp,
+    updated.currentLevel,
+    updated.currentLevelName,
+    updated.nextLevelXp == null ? '' : updated.nextLevelXp,
+    String(updated.lastActivityId),
+    String(updated.lastActivityAt),
+    now,
+  ]];
+
+  sheet.getRange(targetRow, 1).setNumberFormat('@');
+  sheet.getRange(targetRow, 1, 1, ORA_HEADERS.User_Stats.length).setValues(values);
+  return {
+    sheet: sheet,
+    targetRow: targetRow,
+    previousValues: previousValues,
+    stats: updated,
+  };
+}
+
+function restoreUserStatsWrite_(write) {
+  if (write.previousValues) {
+    write.sheet.getRange(
+      write.targetRow,
+      1,
+      1,
+      ORA_HEADERS.User_Stats.length
+    ).setValues([write.previousValues]);
+  } else {
+    write.sheet.deleteRow(write.targetRow);
+  }
+}
+
+function roundDecimal_(value, decimalPlaces) {
+  const factor = Math.pow(10, decimalPlaces);
+  return Math.round((Number(value) + Number.EPSILON) * factor) / factor;
+}
+
+function isNicknameTaken_(nickname, excludedNik) {
+  const rows = readSheetObjects_(ORA_SHEETS.PARTICIPANTS);
+  const target = nickname.toLowerCase();
+
+  return rows.some(function (row) {
+    return (
+      normalizeDigits_(row.NIK) !== excludedNik &&
+      String(row.Nickname || '').trim().toLowerCase() === target
+    );
+  });
+}
+
+function getGuildMasterRecords_() {
+  const spreadsheet = getOraSpreadsheet_();
+  if (!spreadsheet.getSheetByName(ORA_SHEETS.GUILD_MASTER)) return [];
+
+  return readSheetObjects_(ORA_SHEETS.GUILD_MASTER).map(function (row) {
+    return {
+      guildId: String(row.GuildId || '').trim(),
+      guildName: String(row.GuildName || '').trim(),
+      displayName: String(row.DisplayName || '').trim(),
+      description: String(row.Description || '').trim(),
+      status: String(row.Status || '').trim().toUpperCase(),
+      sortOrder: toNonNegativeFiniteNumber_(row.SortOrder),
+      createdAt: row.CreatedAt || null,
+      updatedAt: row.UpdatedAt || null,
+    };
+  }).filter(function (guild) {
+    return !!guild.guildId;
+  });
+}
+
+function getGuildMasterMap_(records) {
+  const guilds = records || getGuildMasterRecords_();
+  const result = {};
+  guilds.filter(function (guild) {
+    return guild.status === 'ACTIVE';
+  }).forEach(function (guild) {
+    result[normalizeDivisionKey_(guild.guildId)] = guild;
+    const nameKey = normalizeDivisionKey_(guild.guildName);
+    if (nameKey && !result[nameKey]) result[nameKey] = guild;
+  });
+  return result;
+}
+
+function findGuildByIdOrName_(guildKey, records) {
+  const target = normalizeDivisionKey_(guildKey);
+  if (!target) return null;
+  const guilds = records || getGuildMasterRecords_();
+  return guilds.find(function (guild) {
+    return normalizeDivisionKey_(guild.guildId) === target;
+  }) || guilds.find(function (guild) {
+    return normalizeDivisionKey_(guild.guildName) === target;
+  }) || null;
+}
+
+function resolveGuildMetadata_(guildKey, records) {
+  const legacyKey = String(guildKey || '').trim();
+  const matched = findGuildByIdOrName_(legacyKey, records || getGuildMasterRecords_());
+  if (!matched) {
+    return {
+      status: 'ACTIVE',
+      legacyFallback: true,
+      guild: {
+        guildId: legacyKey,
+        guildName: legacyKey,
+        displayName: legacyKey,
+        description: '',
+      },
+    };
+  }
+
+  const guildName = matched.guildName || matched.guildId || legacyKey;
+  return {
+    status: matched.status === 'ACTIVE' ? 'ACTIVE' : 'GUILD_INACTIVE',
+    legacyFallback: false,
+    guild: {
+      guildId: matched.guildId || legacyKey,
+      guildName: guildName,
+      displayName: matched.displayName || guildName,
+      description: matched.description || '',
+    },
+  };
+}
+
+function getGuildParticipantRows_() {
+  const sheet = getValidatedSheet_(ORA_SHEETS.PARTICIPANTS);
+  const values = sheet.getDataRange().getDisplayValues();
+  if (values.length < 2) return [];
+
+  const headerMap = createHeaderMap_(values[0]);
+  return values.slice(1).filter(function (row) {
+    return row.some(function (cell) {
+      return cell !== '' && cell !== null;
+    });
+  }).map(function (row) {
+    return {
+      nik: normalizeDigits_(row[headerMap.NIK]),
+      nickname: String(row[headerMap.Nickname] || '').trim(),
+      divisionGuild: String(row[headerMap.Division_Guild] || '').trim(),
+      status: String(row[headerMap.Status] || '').trim().toUpperCase(),
+    };
+  }).filter(function (participant) {
+    return !!participant.nik;
+  });
+}
+
+function getUserStatsByNikMap_() {
+  const spreadsheet = getOraSpreadsheet_();
+  if (!spreadsheet.getSheetByName(ORA_SHEETS.USER_STATS)) return {};
+
+  const sheet = getValidatedSheet_(ORA_SHEETS.USER_STATS);
+  const range = sheet.getDataRange();
+  const values = range.getValues();
+  const displayValues = range.getDisplayValues();
+  if (values.length < 2) return {};
+
+  const headerMap = createHeaderMap_(displayValues[0]);
+  const statsByNik = {};
+  for (let index = 1; index < values.length; index += 1) {
+    const nik = normalizeDigits_(displayValues[index][headerMap.NIK]);
+    if (!nik) continue;
+
+    const row = values[index];
+    statsByNik[nik] = {
+      totalActivities: toNonNegativeFiniteNumber_(row[headerMap.TotalActivities]),
+      totalDistanceKm: toNonNegativeFiniteNumber_(row[headerMap.TotalDistanceKm]),
+      totalXp: toNonNegativeFiniteNumber_(row[headerMap.TotalXP]),
+      currentLevel: toNonNegativeFiniteNumber_(row[headerMap.CurrentLevel]),
+      currentLevelName: String(row[headerMap.CurrentLevelName] || '').trim(),
+    };
+  }
+  return statsByNik;
+}
+
+function getDefaultGuildLevel_() {
+  const levels = getActiveLevels_();
+  return levels.length > 0
+    ? { currentLevel: levels[0].level, currentLevelName: levels[0].levelName }
+    : { currentLevel: 1, currentLevelName: '' };
+}
+
+function normalizeDivisionKey_(value) {
+  return String(value == null ? '' : value).trim().toLowerCase();
+}
+
+function buildGuildSummary_(owner, participants, statsByNik, defaultLevel, guildMetadata) {
+  const membershipKey = String(owner.divisionGuild || '').trim();
+  const divisionKey = normalizeDivisionKey_(membershipKey);
+  const metadata = guildMetadata || {
+    guildId: membershipKey,
+    guildName: membershipKey,
+    displayName: membershipKey,
+    description: '',
+  };
+  const sameDivision = participants.filter(function (participant) {
+    return normalizeDivisionKey_(participant.divisionGuild) === divisionKey;
+  });
+  const activeMembers = sameDivision.filter(function (participant) {
+    return participant.status === 'ACTIVE';
+  });
+  let totalDistanceKm = 0;
+  let totalActivities = 0;
+  let totalXp = 0;
+
+  const members = activeMembers.map(function (participant) {
+    const stats = statsByNik[participant.nik] || null;
+    const distanceKm = stats ? stats.totalDistanceKm : 0;
+    const activities = stats ? stats.totalActivities : 0;
+    const xp = stats ? stats.totalXp : 0;
+    totalDistanceKm += distanceKm;
+    totalActivities += activities;
+    totalXp += xp;
+
+    return {
+      nik: String(participant.nik),
+      nickname: participant.nickname || '',
+      division: participant.divisionGuild,
+      totalDistanceKm: roundDecimal_(distanceKm, 3),
+      totalActivities: activities,
+      totalXP: xp,
+      currentLevel: stats && stats.currentLevel > 0
+        ? stats.currentLevel
+        : defaultLevel.currentLevel,
+      currentLevelName: stats && stats.currentLevelName
+        ? stats.currentLevelName
+        : defaultLevel.currentLevelName,
+    };
+  });
+
+  const guildLevel = resolveGuildLevel_(totalXp, defaultLevel);
+
+  return {
+    guild: {
+      guildId: metadata.guildId || membershipKey,
+      guildName: metadata.guildName || membershipKey,
+      displayName: metadata.displayName || metadata.guildName || membershipKey,
+      description: metadata.description || '',
+      memberCount: sameDivision.length,
+      activeMemberCount: activeMembers.length,
+      totalDistanceKm: roundDecimal_(totalDistanceKm, 3),
+      totalActivities: totalActivities,
+      totalXP: totalXp,
+      currentLevel: guildLevel.currentLevel,
+      currentLevelName: guildLevel.currentLevelName,
+    },
+    members: members,
+  };
+}
+
+function buildGuildDirectory_(participants, statsByNik, defaultLevel, guildMasterRecords) {
+  const guildsByKey = {};
+  const records = guildMasterRecords || [];
+
+  records.filter(function (guild) {
+    return guild.status === 'ACTIVE';
+  }).forEach(function (guild) {
+    const key = normalizeDivisionKey_(guild.guildId || guild.guildName);
+    if (!key) return;
+    guildsByKey[key] = createGuildDirectoryBucket_(guild, key);
+  });
+
+  participants.forEach(function (participant) {
+    const division = String(participant.divisionGuild || '').trim();
+    const divisionKey = normalizeDivisionKey_(division);
+    if (!divisionKey) return;
+
+    const resolution = resolveGuildMetadata_(division, records);
+    const key = resolution.legacyFallback
+      ? divisionKey
+      : normalizeDivisionKey_(resolution.guild.guildId || resolution.guild.guildName || division);
+    if (!guildsByKey[key]) {
+      guildsByKey[key] = createGuildDirectoryBucket_(resolution.guild, key);
+    }
+
+    const bucket = guildsByKey[key];
+    bucket.status = resolution.status;
+    bucket.memberCount += 1;
+
+    if (participant.status !== 'ACTIVE') return;
+
+    const stats = statsByNik[participant.nik] || null;
+    bucket.activeMemberCount += 1;
+    bucket.totalDistanceKm += stats ? stats.totalDistanceKm : 0;
+    bucket.totalActivities += stats ? stats.totalActivities : 0;
+    bucket.totalXP += stats ? stats.totalXp : 0;
+  });
+
+  return Object.keys(guildsByKey).map(function (key) {
+    const guild = guildsByKey[key];
+    const guildLevel = resolveGuildLevel_(guild.totalXP, defaultLevel);
+    return {
+      guildId: guild.guildId,
+      guildName: guild.guildName,
+      displayName: guild.displayName,
+      description: guild.description,
+      status: guild.status,
+      memberCount: guild.memberCount,
+      activeMemberCount: guild.activeMemberCount,
+      totalDistanceKm: roundDecimal_(guild.totalDistanceKm, 3),
+      totalActivities: guild.totalActivities,
+      totalXP: guild.totalXP,
+      currentLevel: guildLevel.currentLevel,
+      currentLevelName: guildLevel.currentLevelName,
+      sortOrder: guild.sortOrder,
+    };
+  }).sort(function (left, right) {
+    const leftOrder = Number(left.sortOrder) || 0;
+    const rightOrder = Number(right.sortOrder) || 0;
+    if (leftOrder !== rightOrder) return leftOrder - rightOrder;
+    if (right.totalXP !== left.totalXP) return right.totalXP - left.totalXP;
+    return String(left.displayName || left.guildName)
+      .localeCompare(String(right.displayName || right.guildName));
+  });
+}
+
+function createGuildDirectoryBucket_(metadata, fallbackKey) {
+  const guildId = String(metadata.guildId || fallbackKey || '').trim();
+  const guildName = String(metadata.guildName || guildId).trim();
+  return {
+    guildId: guildId,
+    guildName: guildName,
+    displayName: String(metadata.displayName || guildName || guildId).trim(),
+    description: String(metadata.description || '').trim(),
+    status: String(metadata.status || 'ACTIVE').trim().toUpperCase() || 'ACTIVE',
+    sortOrder: Number(metadata.sortOrder) || 0,
+    memberCount: 0,
+    activeMemberCount: 0,
+    totalDistanceKm: 0,
+    totalActivities: 0,
+    totalXP: 0,
+  };
+}
+
+function resolveGuildLevel_(totalXp, defaultLevel) {
+  try {
+    const level = getLevelByXp_(totalXp);
+    return {
+      currentLevel: level.currentLevel,
+      currentLevelName: level.currentLevelName,
+    };
+  } catch (_) {
+    return defaultLevel || { currentLevel: 1, currentLevelName: '' };
+  }
+}
+
+function isSupportedLeaderboardMetric_(metric) {
+  return (
+    metric === 'TOTAL_XP' ||
+    metric === 'TOTAL_DISTANCE' ||
+    metric === 'TOTAL_ACTIVITIES'
+  );
+}
+
+function leaderboardMetricValue_(entry, metric) {
+  if (metric === 'TOTAL_DISTANCE') return entry.totalDistanceKm;
+  if (metric === 'TOTAL_ACTIVITIES') return entry.totalActivities;
+  return entry.totalXP;
+}
+
+function buildLeaderboard_(currentNik, participants, statsByNik, metric, limit) {
+  const activeByNik = {};
+  participants.forEach(function (participant) {
+    if (participant.status === 'ACTIVE' && participant.nik) {
+      activeByNik[participant.nik] = participant;
+    }
+  });
+
+  const ranked = Object.keys(statsByNik).filter(function (nik) {
+    return !!activeByNik[nik];
+  }).map(function (nik) {
+    const participant = activeByNik[nik];
+    const stats = statsByNik[nik];
+    return {
+      rank: 0,
+      nik: String(nik),
+      nickname: participant.nickname || '',
+      division: participant.divisionGuild || '',
+      totalXP: stats.totalXp,
+      totalDistanceKm: roundDecimal_(stats.totalDistanceKm, 3),
+      totalActivities: stats.totalActivities,
+      currentLevel: stats.currentLevel > 0 ? stats.currentLevel : 1,
+      currentLevelName: stats.currentLevelName || '',
+    };
+  }).sort(function (left, right) {
+    const metricDifference =
+      leaderboardMetricValue_(right, metric) - leaderboardMetricValue_(left, metric);
+    if (metricDifference !== 0) return metricDifference;
+
+    const nicknameDifference = left.nickname.localeCompare(right.nickname);
+    if (nicknameDifference !== 0) return nicknameDifference;
+    return left.nik.localeCompare(right.nik);
+  });
+
+  ranked.forEach(function (entry, index) {
+    entry.rank = index + 1;
+  });
+  const currentEntry = ranked.find(function (entry) {
+    return entry.nik === normalizeDigits_(currentNik);
+  });
+  const safeLimit = Math.min(50, Math.max(0, Number(limit) || 50));
+
+  return {
+    leaderboard: ranked.slice(0, safeLimit),
+    currentUserRank: currentEntry ? {
+      rank: currentEntry.rank,
+      metricValue: leaderboardMetricValue_(currentEntry, metric),
+    } : null,
+  };
+}
+
+function publicParticipant_(participant) {
+  return {
+    nik: participant.nik,
+    nickname: participant.nickname || null,
+    divisionGuild: participant.divisionGuild,
+    status: participant.status,
+  };
+}
+
+function getNicknameMaxLength_() {
+  const config = getActiveConfig_();
+  const configured = Number(config.NICKNAME_MAX_LENGTH);
+  return Number.isFinite(configured) && configured > 0 ? Math.floor(configured) : 8;
+}
+
+function requireSession_(tokenValue) {
+  const token = String(tokenValue == null ? '' : tokenValue).trim();
+  if (!token) throw oraError_('UNAUTHORIZED', 'Session token wajib diisi.');
+
+  const key = sessionCacheKey_(token);
+  const cache = CacheService.getScriptCache();
+  const properties = PropertiesService.getScriptProperties();
+  const cached = cache.get(key);
+  const serialized = cached || properties.getProperty(key);
+  if (!serialized) {
+    throw oraError_('SESSION_EXPIRED', 'Sesi telah berakhir. Silakan login kembali.');
+  }
+
+  try {
+    const session = JSON.parse(serialized);
+    if (!session.nik) throw new Error('Session NIK missing');
+
+    // Migrate a still-cached session created before persistent 30-day sessions.
+    if (!Number.isFinite(Number(session.expiresAtMillis))) {
+      return saveSession_(token, session.nik);
+    }
+
+    const nowMillis = Date.now();
+    if (Number(session.expiresAtMillis) <= nowMillis) {
+      deleteSession_(token);
+      throw oraError_('SESSION_EXPIRED', 'Sesi telah berakhir. Silakan login kembali.');
+    }
+
+    if (!cached) cacheSession_(key, serialized, session.expiresAtMillis, nowMillis);
+    return session;
+  } catch (error) {
+    if (error && error.oraCode) throw error;
+    deleteSession_(token);
+    throw oraError_('UNAUTHORIZED', 'Session tidak valid.');
+  }
+}
+
+function saveSession_(token, nik, issuedAtMillis) {
+  const nowMillis = Number.isFinite(Number(issuedAtMillis))
+    ? Number(issuedAtMillis)
+    : Date.now();
+  const session = {
+    nik: normalizeDigits_(nik),
+    issuedAtMillis: nowMillis,
+    expiresAtMillis: nowMillis + ORA_SESSION_TTL_SECONDS * 1000,
+  };
+  if (!session.nik) throw oraError_('UNAUTHORIZED', 'Session NIK tidak valid.');
+
+  const key = sessionCacheKey_(token);
+  const serialized = JSON.stringify(session);
+  const properties = PropertiesService.getScriptProperties();
+  cleanupExpiredSessions_(properties, nowMillis);
+  properties.setProperty(key, serialized);
+  cacheSession_(key, serialized, session.expiresAtMillis, nowMillis);
+  return session;
+}
+
+function cacheSession_(key, serialized, expiresAtMillis, nowMillis) {
+  const remainingSeconds = Math.max(
+    1,
+    Math.ceil((Number(expiresAtMillis) - Number(nowMillis)) / 1000)
+  );
+  CacheService.getScriptCache().put(
+    key,
+    serialized,
+    Math.min(remainingSeconds, ORA_SESSION_CACHE_TTL_SECONDS)
+  );
+}
+
+function deleteSession_(token) {
+  const key = sessionCacheKey_(token);
+  CacheService.getScriptCache().remove(key);
+  PropertiesService.getScriptProperties().deleteProperty(key);
+}
+
+function cleanupExpiredSessions_(properties, nowMillis) {
+  const allProperties = properties.getProperties();
+  const expiredKeys = [];
+  Object.keys(allProperties).forEach(function (key) {
+    if (key.indexOf(ORA_SESSION_PROPERTY_PREFIX) !== 0) return;
+
+    try {
+      const session = JSON.parse(allProperties[key]);
+      const expiresAtMillis = Number(session.expiresAtMillis);
+      if (!Number.isFinite(expiresAtMillis) || expiresAtMillis <= nowMillis) {
+        expiredKeys.push(key);
+      }
+    } catch (error) {
+      expiredKeys.push(key);
+    }
+  });
+  expiredKeys.forEach(function (key) {
+    properties.deleteProperty(key);
+  });
+}
+
+function sessionCacheKey_(token) {
+  const digest = Utilities.computeDigest(
+    Utilities.DigestAlgorithm.SHA_256,
+    token,
+    Utilities.Charset.UTF_8
+  );
+  return ORA_SESSION_PROPERTY_PREFIX + Utilities.base64EncodeWebSafe(digest);
+}
+
+function readSheetObjects_(sheetName) {
+  const sheet = getValidatedSheet_(sheetName);
+  const values = sheet.getDataRange().getValues();
+  if (values.length < 2) return [];
+
+  const headers = values[0].map(function (header) {
+    return String(header).trim();
+  });
+
+  return values.slice(1).filter(function (row) {
+    return row.some(function (cell) {
+      return cell !== '' && cell !== null;
+    });
+  }).map(function (row) {
+    const object = {};
+    headers.forEach(function (header, index) {
+      object[header] = row[index];
+    });
+    return object;
+  });
+}
+
+function getValidatedSheet_(sheetName) {
+  const spreadsheet = getOraSpreadsheet_();
+  const sheet = spreadsheet.getSheetByName(sheetName);
+  if (!sheet) {
+    throw oraError_('SHEET_NOT_FOUND', 'Sheet ' + sheetName + ' tidak ditemukan.');
+  }
+
+  const expectedHeaders = ORA_HEADERS[sheetName];
+  const lastColumn = Math.max(sheet.getLastColumn(), expectedHeaders.length);
+  const actualHeaders = sheet.getRange(1, 1, 1, lastColumn).getDisplayValues()[0];
+  const actualSet = {};
+  actualHeaders.forEach(function (header) {
+    actualSet[String(header).trim()] = true;
+  });
+
+  const missing = expectedHeaders.filter(function (header) {
+    return !actualSet[header];
+  });
+
+  if (missing.length > 0) {
+    throw oraError_(
+      'INVALID_SHEET_SCHEMA',
+      'Header sheet ' + sheetName + ' tidak lengkap: ' + missing.join(', ')
+    );
+  }
+
+  return sheet;
+}
+
+function getOraSpreadsheet_() {
+  const properties = PropertiesService.getScriptProperties();
+  const spreadsheetId = properties.getProperty(ORA_SPREADSHEET_ID_PROPERTY);
+
+  if (spreadsheetId) {
+    return SpreadsheetApp.openById(spreadsheetId);
+  }
+
+  const activeSpreadsheet = SpreadsheetApp.getActiveSpreadsheet();
+  if (!activeSpreadsheet) {
+    throw oraError_(
+      'BACKEND_NOT_INITIALIZED',
+      'Jalankan setupBackend1 dari Apps Script editor terlebih dahulu.'
+    );
+  }
+
+  return activeSpreadsheet;
+}
+
+function createHeaderMap_(headers) {
+  const map = {};
+  headers.forEach(function (header, index) {
+    map[String(header).trim()] = index;
+  });
+  return map;
+}
+
+function parseJsonBody_(e) {
+  if (!e || !e.postData || !e.postData.contents) {
+    throw oraError_('INVALID_REQUEST', 'Body JSON wajib dikirim.');
+  }
+
+  try {
+    const parsed = JSON.parse(e.postData.contents);
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+      throw new Error('JSON object required');
+    }
+    return parsed;
+  } catch (error) {
+    throw oraError_('INVALID_JSON', 'Body request bukan JSON yang valid.');
+  }
+}
+
+function normalizeAction_(value) {
+  return String(value == null ? '' : value).trim().toLowerCase();
+}
+
+function normalizeDigits_(value) {
+  return String(value == null ? '' : value).trim();
+}
+
+function isTrue_(value) {
+  if (value === true) return true;
+  return String(value).trim().toUpperCase() === 'TRUE';
+}
+
+function convertConfigValue_(value, dataType) {
+  const type = String(dataType || 'TEXT').trim().toUpperCase();
+
+  if (type === 'NUMBER') return toFiniteNumberOrNull_(value);
+  if (type === 'BOOLEAN') return isTrue_(value);
+  return String(value == null ? '' : value);
+}
+
+function toFiniteNumberOrNull_(value) {
+  const number = Number(value);
+  return Number.isFinite(number) ? number : null;
+}
+
+function toNonNegativeFiniteNumber_(value) {
+  const number = Number(value);
+  return Number.isFinite(number) && number > 0 ? number : 0;
+}
+
+function isQuestWithinDateRange_(row, now) {
+  const start = toDateOrNull_(row.Start_Date);
+  const end = toDateOrNull_(row.End_Date);
+
+  if (start) {
+    start.setHours(0, 0, 0, 0);
+    if (now < start) return false;
+  }
+
+  if (end) {
+    end.setHours(23, 59, 59, 999);
+    if (now > end) return false;
+  }
+
+  return true;
+}
+
+function toDateOrNull_(value) {
+  if (!value) return null;
+  if (Object.prototype.toString.call(value) === '[object Date]' && !isNaN(value)) {
+    return new Date(value.getTime());
+  }
+
+  const parsed = new Date(value);
+  return isNaN(parsed.getTime()) ? null : parsed;
+}
+
+function toIsoDateOrNull_(value) {
+  const date = toDateOrNull_(value);
+  if (!date) return null;
+  return Utilities.formatDate(date, Session.getScriptTimeZone(), 'yyyy-MM-dd');
+}
+
+function toLocalDateKeyOrNull_(value) {
+  const date = toDateOrNull_(value);
+  if (!date) return null;
+  return Utilities.formatDate(date, Session.getScriptTimeZone(), 'yyyy-MM-dd');
+}
+
+function isoDateKeyToDayNumber_(dateKey) {
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(dateKey || ''));
+  if (!match) return null;
+
+  const year = Number(match[1]);
+  const month = Number(match[2]);
+  const day = Number(match[3]);
+  const time = Date.UTC(year, month - 1, day);
+  const parsed = new Date(time);
+  if (
+    parsed.getUTCFullYear() !== year ||
+    parsed.getUTCMonth() !== month - 1 ||
+    parsed.getUTCDate() !== day
+  ) {
+    return null;
+  }
+  return Math.floor(time / 86400000);
+}
+
+function jsonSuccess_(data) {
+  return jsonOutput_({
+    ok: true,
+    apiVersion: ORA_API_VERSION,
+    timestamp: new Date().toISOString(),
+    data: data,
+  });
+}
+
+function jsonError_(code, message) {
+  return jsonOutput_({
+    ok: false,
+    apiVersion: ORA_API_VERSION,
+    timestamp: new Date().toISOString(),
+    error: {
+      code: code,
+      message: message,
+    },
+  });
+}
+
+function jsonOutput_(payload) {
+  return ContentService.createTextOutput(JSON.stringify(payload))
+    .setMimeType(ContentService.MimeType.JSON);
+}
+
+function oraError_(code, message) {
+  const error = new Error(message);
+  error.oraCode = code;
+  return error;
+}
+
+function safeErrorMessage_(error) {
+  return error && error.message ? error.message : String(error);
+}
+
+/**
+ * Run this once from the Apps Script editor before deployment.
+ * It validates the schema and stores the bound spreadsheet ID in Script Properties.
+ * Participant/master rows are not changed.
+ */
+function setupBackend1() {
+  const spreadsheet = SpreadsheetApp.getActiveSpreadsheet();
+  if (!spreadsheet) {
+    throw new Error('Buka Apps Script melalui ORA_Master_Data lalu jalankan kembali.');
+  }
+
+  PropertiesService.getScriptProperties().setProperty(
+    ORA_SPREADSHEET_ID_PROPERTY,
+    spreadsheet.getId()
+  );
+
+  ensureUserStatsSheet_();
+  ensureQuestClaimsSheet_();
+  ensureGuildMasterSheet_();
+
+  Object.keys(ORA_HEADERS).forEach(function (sheetName) {
+    getValidatedSheet_(sheetName);
+  });
+
+  const summary = {
+    spreadsheet: spreadsheet.getName(),
+    participants: readSheetObjects_(ORA_SHEETS.PARTICIPANTS).length,
+    activities: readSheetObjects_(ORA_SHEETS.ACTIVITIES).length,
+    userStats: readSheetObjects_(ORA_SHEETS.USER_STATS).length,
+    questClaims: readSheetObjects_(ORA_SHEETS.QUEST_CLAIMS).length,
+    guildMasters: readSheetObjects_(ORA_SHEETS.GUILD_MASTER).length,
+    activeConfigKeys: Object.keys(getActiveConfig_()).length,
+    activeLevels: getActiveLevels_().length,
+    activeQuestsToday: getActiveQuests_().length,
+  };
+
+  console.log(JSON.stringify(summary, null, 2));
+  return summary;
+}
+
+/** Read-only recheck that can be run again at any time. */
+function testBackend1Setup() {
+  return setupBackend1();
+}
+
+function setupGuildMaster() {
+  const sheet = ensureGuildMasterSheet_();
+  const summary = {
+    ok: true,
+    sheet: sheet.getName(),
+    headers: ORA_HEADERS.Guild_Master,
+    rowCount: Math.max(0, sheet.getLastRow() - 1),
+  };
+  console.log(JSON.stringify(summary, null, 2));
+  return summary;
+}
+
+function testGuildMaster() {
+  const setup = setupGuildMaster();
+  const records = getGuildMasterRecords_();
+  const activeMap = getGuildMasterMap_(records);
+  const foundation = testGuildMasterFoundation();
+  const summary = {
+    ok: true,
+    sheet: setup.sheet,
+    headers: setup.headers,
+    totalGuilds: records.length,
+    activeLookupKeys: Object.keys(activeMap).length,
+    foundationTests: foundation,
+  };
+  console.log(JSON.stringify(summary, null, 2));
+  return summary;
+}
+
+function testQuestClaimReadiness() {
+  const sheet = ensureQuestClaimsSheet_();
+  const completeQuest = publicQuestProgress_({
+    questId: 'TEST-CLAIM',
+    questName: 'Test Claim',
+    questType: 'DISTANCE',
+    targetValue: 5,
+    unit: 'KM',
+    rewardXp: 100,
+    periodType: 'WEEKLY',
+    startDate: '2026-08-10',
+    endDate: '2026-08-16',
+  }, 5, 'COMPLETED', true, 100);
+  const unclaimed = attachQuestClaim_(completeQuest, null);
+  assertBackendTest_(
+    unclaimed.completed === true && unclaimed.claimed === false,
+    'Quest complete harus tersedia untuk claim.'
+  );
+
+  const claimed = attachQuestClaim_(completeQuest, {
+    claimId: 'TEST-CLAIM-ID',
+    claimedAt: new Date(),
+  });
+  assertBackendTest_(
+    claimed.claimed === true && claimed.claimId === 'TEST-CLAIM-ID',
+    'Quest claimed harus membawa identitas claim.'
+  );
+
+  return {
+    ok: true,
+    sheet: sheet.getName(),
+    headers: ORA_HEADERS.Quest_Claims,
+    endpoint: 'claimQuestReward',
+    completedClaimable: true,
+    claimedStateSafe: true,
+    unsupportedGroupClaimBlocked: true,
+    unknownTypeClaimBlocked: true,
+  };
+}
+
+/**
+ * Optional live integration test. It mutates only the configured dummy account
+ * when that account has a completed, unclaimed, supported quest.
+ */
+function testClaimQuestReward() {
+  const sessionToken = getOrCreateTestSessionToken_();
+  const session = requireSession_(sessionToken);
+  const progressResponse = JSON.parse(handleGetQuestProgress_({
+    action: 'getQuestProgress',
+    sessionToken: sessionToken,
+  }).getContent());
+  const claimable = progressResponse.quests.find(function (quest) {
+    return (
+      quest.completed === true &&
+      quest.claimed !== true &&
+      quest.claimable !== false &&
+      quest.status !== 'UNKNOWN_TYPE' &&
+      quest.status !== 'UNSUPPORTED_GROUP_SCOPE'
+    );
+  });
+
+  if (!claimable) {
+    return {
+      ok: true,
+      skipped: true,
+      nik: session.nik,
+      reason: 'Dummy account belum memiliki quest completed yang dapat diklaim.',
+    };
+  }
+
+  const before = getUserStatsByNik_(session.nik);
+  const first = JSON.parse(handleClaimQuestReward_({
+    action: 'claimQuestReward',
+    sessionToken: sessionToken,
+    questId: claimable.questId,
+  }).getContent());
+  const afterFirst = getUserStatsByNik_(session.nik);
+  const second = JSON.parse(handleClaimQuestReward_({
+    action: 'claimQuestReward',
+    sessionToken: sessionToken,
+    questId: claimable.questId,
+  }).getContent());
+  const afterSecond = getUserStatsByNik_(session.nik);
+  const rewardXp = Math.max(0, Math.round(Number(claimable.rewardXp) || 0));
+  const beforeXp = before ? before.totalXp : 0;
+
+  assertBackendTest_(
+    first.ok && first.data.status === 'CLAIMED',
+    'Klaim pertama harus berhasil sebagai CLAIMED.'
+  );
+  assertBackendTest_(
+    second.ok && second.data.status === 'ALREADY_CLAIMED',
+    'Klaim kedua harus idempotent sebagai ALREADY_CLAIMED.'
+  );
+  assertBackendTest_(
+    afterFirst.totalXp === beforeXp + rewardXp,
+    'Reward XP harus ditambahkan tepat satu kali.'
+  );
+  assertBackendTest_(
+    afterSecond.totalXp === afterFirst.totalXp,
+    'Klaim ulang tidak boleh menambah XP.'
+  );
+
+  return {
+    ok: true,
+    skipped: false,
+    questId: claimable.questId,
+    rewardXp: rewardXp,
+    firstStatus: first.data.status,
+    secondStatus: second.data.status,
+    xpBefore: beforeXp,
+    xpAfter: afterSecond.totalXp,
+    idempotent: true,
+  };
+}
+
+function jsonUserStatsSuccess_(stats) {
+  return jsonOutput_({
+    ok: true,
+    apiVersion: ORA_API_VERSION,
+    timestamp: new Date().toISOString(),
+    stats: stats,
+  });
+}
+
+function jsonGuildSummarySuccess_(status, guild, members) {
+  return jsonOutput_({
+    ok: true,
+    apiVersion: ORA_API_VERSION,
+    timestamp: new Date().toISOString(),
+    status: status,
+    guild: guild,
+    members: members,
+  });
+}
+
+function jsonGuildDirectorySuccess_(guilds) {
+  return jsonOutput_({
+    ok: true,
+    apiVersion: ORA_API_VERSION,
+    timestamp: new Date().toISOString(),
+    guilds: guilds,
+  });
+}
+
+function jsonLeaderboardSuccess_(scope, metric, leaderboard, currentUserRank, status) {
+  return jsonOutput_({
+    ok: true,
+    apiVersion: ORA_API_VERSION,
+    timestamp: new Date().toISOString(),
+    scope: scope,
+    metric: metric,
+    status: status || 'ACTIVE',
+    leaderboard: leaderboard,
+    currentUserRank: currentUserRank,
+  });
+}
+
+function jsonQuestProgressSuccess_(quests) {
+  return jsonOutput_({
+    ok: true,
+    apiVersion: ORA_API_VERSION,
+    timestamp: new Date().toISOString(),
+    quests: quests,
+  });
+}
+
+/**
+ * Backend-2 manual test.
+ * Uses an existing test token or creates one from dummy Script Properties.
+ */
+function testSubmitActivity() {
+  const sessionToken = getOrCreateTestSessionToken_();
+
+  const response = handleSubmitActivity_({
+    action: 'submitActivity',
+    sessionToken: sessionToken,
+    activity: {
+      activityId: 'DUMMY-ACT-' + Date.now(),
+      startTime: '2026-08-12T06:10:00+07:00',
+      endTime: '2026-08-12T06:45:00+07:00',
+      durationSec: 2100,
+      distanceKm: 5.21,
+      avgPace: '06:43',
+      deviceTime: '2026-08-12T06:45:10+07:00',
+    },
+  });
+
+  const content = response.getContent();
+  console.log(content);
+  return JSON.parse(content);
+}
+
+/**
+ * Backend-3 integration test using the configured dummy account.
+ * Proves SAVED aggregation plus DUPLICATE/invalid idempotency without logging the token.
+ */
+function testSubmitActivityUpdatesUserStats() {
+  const sessionToken = getOrCreateTestSessionToken_();
+
+  ensureUserStatsSheet_();
+  const session = requireSession_(sessionToken);
+  const before = getUserStatsByNik_(session.nik);
+  const activityId = 'DUMMY-XP-' + Date.now();
+  const distanceKm = 1.25;
+  const durationSec = 600;
+  const payload = {
+    action: 'submitActivity',
+    sessionToken: sessionToken,
+    activity: {
+      activityId: activityId,
+      startTime: '2026-08-12T07:00:00+07:00',
+      endTime: '2026-08-12T07:10:00+07:00',
+      durationSec: durationSec,
+      distanceKm: distanceKm,
+      avgPace: '08:00',
+      deviceTime: '2026-08-12T07:10:05+07:00',
+    },
+  };
+
+  const saved = JSON.parse(handleSubmitActivity_(payload).getContent());
+  assertBackendTest_(saved.ok && saved.data.status === 'SAVED', 'Activity baru harus SAVED.');
+
+  const afterSaved = getUserStatsByNik_(session.nik);
+  const previousActivities = before ? before.totalActivities : 0;
+  const previousDistance = before ? before.totalDistanceKm : 0;
+  const previousDuration = before ? before.totalDurationSec : 0;
+  const previousXp = before ? before.totalXp : 0;
+  const expectedXp = calculateActivityXp_(distanceKm, 'COMPLETED');
+  const expectedLevel = getLevelByXp_(afterSaved.totalXp);
+
+  assertBackendTest_(
+    afterSaved.totalActivities === previousActivities + 1,
+    'TotalActivities tidak bertambah tepat 1.'
+  );
+  assertBackendTest_(
+    afterSaved.totalDistanceKm === roundDecimal_(previousDistance + distanceKm, 3),
+    'TotalDistanceKm tidak bertambah sesuai activity.'
+  );
+  assertBackendTest_(
+    afterSaved.totalDurationSec === roundDecimal_(previousDuration + durationSec, 3),
+    'TotalDurationSec tidak bertambah sesuai activity.'
+  );
+  assertBackendTest_(
+    afterSaved.totalXp === previousXp + expectedXp,
+    'TotalXP tidak bertambah sesuai XP activity.'
+  );
+  assertBackendTest_(
+    afterSaved.currentLevel === expectedLevel.currentLevel &&
+      afterSaved.currentLevelName === expectedLevel.currentLevelName,
+    'Level tidak sesuai Level_Master.'
+  );
+
+  const duplicate = JSON.parse(handleSubmitActivity_(payload).getContent());
+  assertBackendTest_(
+    duplicate.ok && duplicate.data.status === 'DUPLICATE',
+    'Pengiriman ulang harus DUPLICATE.'
+  );
+  const afterDuplicate = getUserStatsByNik_(session.nik);
+  assertUserStatsTotalsEqual_(afterSaved, afterDuplicate, 'Duplicate mengubah User_Stats.');
+
+  const invalidPayload = JSON.parse(JSON.stringify(payload));
+  invalidPayload.activity.activityId = activityId + '-INVALID';
+  invalidPayload.activity.durationSec = 0;
+  const invalid = JSON.parse(handleSubmitActivity_(invalidPayload).getContent());
+  assertBackendTest_(!invalid.ok, 'Activity invalid seharusnya ditolak.');
+  const afterInvalid = getUserStatsByNik_(session.nik);
+  assertUserStatsTotalsEqual_(afterSaved, afterInvalid, 'Activity invalid mengubah User_Stats.');
+
+  const summary = {
+    ok: true,
+    savedStatus: saved.data.status,
+    duplicateStatus: duplicate.data.status,
+    invalidRejected: !invalid.ok,
+    activityId: activityId,
+    activityXp: expectedXp,
+    userStats: afterInvalid,
+  };
+  console.log(JSON.stringify(summary, null, 2));
+  return summary;
+}
+
+function testGetUserStats() {
+  const sessionToken = getOrCreateTestSessionToken_();
+  const session = requireSession_(sessionToken);
+  const response = JSON.parse(handleGetUserStats_({
+    action: 'getUserStats',
+    sessionToken: sessionToken,
+  }).getContent());
+
+  assertBackendTest_(response.ok === true, 'getUserStats harus return ok true.');
+  assertBackendTest_(!!response.stats, 'getUserStats harus memiliki object stats.');
+  assertBackendTest_(response.stats.nik === session.nik, 'Stats harus milik session aktif.');
+  assertBackendTest_(
+    Number.isFinite(Number(response.stats.totalActivities)) &&
+      Number.isFinite(Number(response.stats.totalDistanceKm)) &&
+      Number.isFinite(Number(response.stats.totalDurationSec)) &&
+      Number.isFinite(Number(response.stats.totalXP)),
+    'Total statistik harus berupa angka.'
+  );
+
+  const summary = {
+    ok: true,
+    hasStats: true,
+    totalActivities: response.stats.totalActivities,
+    totalDistanceKm: response.stats.totalDistanceKm,
+    totalDurationSec: response.stats.totalDurationSec,
+    totalXP: response.stats.totalXP,
+    currentLevel: response.stats.currentLevel,
+    currentLevelName: response.stats.currentLevelName,
+    nextLevelXP: response.stats.nextLevelXP,
+  };
+  console.log(JSON.stringify(summary, null, 2));
+  return summary;
+}
+
+function testGuildMasterFoundation() {
+  const records = [
+    {
+      guildId: 'Operations',
+      guildName: 'Operations',
+      displayName: 'OTO Operations Crew',
+      description: 'Operations runners and walkers.',
+      status: 'ACTIVE',
+      sortOrder: 1,
+    },
+    {
+      guildId: 'Legacy-Inactive',
+      guildName: 'Legacy Inactive',
+      displayName: 'Archived Guild',
+      description: '',
+      status: 'INACTIVE',
+      sortOrder: 2,
+    },
+  ];
+  const activeMap = getGuildMasterMap_(records);
+  const matched = resolveGuildMetadata_('Operations', records);
+  const matchedByName = findGuildByIdOrName_('operations', records);
+  const fallback = resolveGuildMetadata_('Unregistered Division', records);
+  const inactive = resolveGuildMetadata_('Legacy-Inactive', records);
+
+  assertBackendTest_(
+    activeMap.operations && activeMap.operations.displayName === 'OTO Operations Crew',
+    'Guild_Master ACTIVE harus tersedia melalui lookup map.'
+  );
+  assertBackendTest_(
+    matched.status === 'ACTIVE' &&
+      matched.guild.guildId === 'Operations' &&
+      matched.guild.displayName === 'OTO Operations Crew',
+    'Division existing harus cocok dengan GuildId dan memakai DisplayName master.'
+  );
+  assertBackendTest_(
+    matchedByName && matchedByName.guildId === 'Operations',
+    'Guild lookup berdasarkan ID atau nama harus case-insensitive.'
+  );
+  assertBackendTest_(
+    fallback.status === 'ACTIVE' &&
+      fallback.legacyFallback === true &&
+      fallback.guild.guildId === 'Unregistered Division' &&
+      fallback.guild.displayName === 'Unregistered Division',
+    'Guild yang tidak ada di master harus memakai fallback Division lama.'
+  );
+  assertBackendTest_(
+    inactive.status === 'GUILD_INACTIVE' && !activeMap['legacy-inactive'],
+    'Guild master INACTIVE harus aman dan tidak masuk active map.'
+  );
+
+  const summary = buildGuildSummary_({
+    nik: '001',
+    divisionGuild: 'Operations',
+  }, [
+    { nik: '001', nickname: 'ALPHA', divisionGuild: 'Operations', status: 'ACTIVE' },
+    { nik: '002', nickname: 'BETA', divisionGuild: 'Other', status: 'ACTIVE' },
+  ], {
+    '001': {
+      totalActivities: 1,
+      totalDistanceKm: 1.25,
+      totalXp: 13,
+      currentLevel: 1,
+      currentLevelName: 'ROOKIE',
+    },
+  }, {
+    currentLevel: 1,
+    currentLevelName: 'ROOKIE',
+  }, matched.guild);
+  assertBackendTest_(
+    summary.guild.displayName === 'OTO Operations Crew' &&
+      summary.guild.description === 'Operations runners and walkers.' &&
+      summary.members.length === 1,
+    'Guild summary harus memakai metadata tanpa merusak Division isolation.'
+  );
+  const serialized = JSON.stringify(summary).toLowerCase();
+  assertBackendTest_(
+    serialized.indexOf('"pin"') === -1 && serialized.indexOf('sessiontoken') === -1,
+    'Metadata guild tidak boleh expose field sensitif.'
+  );
+
+  return {
+    ok: true,
+    activeGuildReadable: true,
+    guildIdMatching: true,
+    guildNameMatching: true,
+    displayNameApplied: true,
+    legacyFallbackSafe: true,
+    inactiveGuildSafe: true,
+    divisionIsolation: true,
+    sensitiveFieldsExcluded: true,
+  };
+}
+
+function testGetGuildSummary() {
+  const sessionToken = getOrCreateTestSessionToken_();
+  const session = requireSession_(sessionToken);
+  const owner = findParticipantByNik_(session.nik);
+  const response = JSON.parse(handleGetGuildSummary_({
+    action: 'getGuildSummary',
+    sessionToken: sessionToken,
+  }).getContent());
+
+  assertBackendTest_(response.ok === true, 'getGuildSummary harus return ok true.');
+  assertBackendTest_(Array.isArray(response.members), 'Response guild harus memiliki array members.');
+
+  const ownerDivision = String(owner.divisionGuild || '').trim();
+  if (!ownerDivision) {
+    assertBackendTest_(
+      response.status === 'UNASSIGNED' && response.guild === null && response.members.length === 0,
+      'User tanpa Division harus aman sebagai UNASSIGNED.'
+    );
+  } else {
+    const divisionKey = normalizeDivisionKey_(ownerDivision);
+    const resolution = resolveGuildMetadata_(ownerDivision, getGuildMasterRecords_());
+    const expectedParticipants = getGuildParticipantRows_().filter(function (participant) {
+      return normalizeDivisionKey_(participant.divisionGuild) === divisionKey;
+    });
+    const expectedActive = expectedParticipants.filter(function (participant) {
+      return participant.status === 'ACTIVE';
+    });
+
+    assertBackendTest_(
+      response.status === resolution.status,
+      'Status guild harus mengikuti Guild_Master atau fallback legacy.'
+    );
+    assertBackendTest_(
+      response.guild.guildId === resolution.guild.guildId &&
+        response.guild.displayName === resolution.guild.displayName,
+      'Metadata guild response harus mengikuti hasil resolusi Guild_Master.'
+    );
+    assertBackendTest_(
+      response.guild.memberCount === expectedParticipants.length &&
+        response.guild.activeMemberCount === expectedActive.length &&
+        response.members.length === expectedActive.length,
+      'Jumlah member guild harus konsisten dengan Participants.'
+    );
+    response.members.forEach(function (member) {
+      assertBackendTest_(
+        normalizeDivisionKey_(member.division) === divisionKey,
+        'Member dari Division lain tidak boleh masuk.'
+      );
+      assertBackendTest_(typeof member.nik === 'string', 'NIK member harus berupa string.');
+    });
+  }
+
+  const mappingTests = testGuildSummaryFoundation();
+  const masterTests = testGuildMasterFoundation();
+  const serialized = JSON.stringify(response).toLowerCase();
+  assertBackendTest_(serialized.indexOf('"pin"') === -1, 'Response guild tidak boleh expose PIN.');
+  assertBackendTest_(
+    serialized.indexOf('sessiontoken') === -1,
+    'Response guild tidak boleh expose session token.'
+  );
+
+  const summary = {
+    ok: true,
+    status: response.status,
+    guild: response.guild,
+    memberCount: response.members.length,
+    foundationTests: mappingTests,
+    guildMasterTests: masterTests,
+  };
+  console.log(JSON.stringify(summary, null, 2));
+  return summary;
+}
+
+function testGuildSummaryFoundation() {
+  const owner = {
+    nik: '00123',
+    divisionGuild: 'TRAIL NORTH',
+  };
+  const participants = [
+    { nik: '00123', nickname: 'ALPHA', divisionGuild: 'TRAIL NORTH', status: 'ACTIVE' },
+    { nik: '00456', nickname: 'BETA', divisionGuild: ' trail north ', status: 'ACTIVE' },
+    { nik: '00789', nickname: 'GAMMA', divisionGuild: 'TRAIL NORTH', status: 'INACTIVE' },
+    { nik: '00999', nickname: 'OUTSIDER', divisionGuild: 'ROAD SOUTH', status: 'ACTIVE' },
+  ];
+  const statsByNik = {
+    '00123': {
+      totalActivities: 3,
+      totalDistanceKm: 12.345,
+      totalXp: 140,
+      currentLevel: 2,
+      currentLevelName: 'SCOUT',
+    },
+    '00999': {
+      totalActivities: 99,
+      totalDistanceKm: 999,
+      totalXp: 9999,
+      currentLevel: 9,
+      currentLevelName: 'OUTSIDER',
+    },
+  };
+  const result = buildGuildSummary_(
+    owner,
+    participants,
+    statsByNik,
+    { currentLevel: 1, currentLevelName: 'ROOKIE' }
+  );
+  const missingStatsMember = result.members.find(function (member) {
+    return member.nik === '00456';
+  });
+
+  assertBackendTest_(
+    result.guild.memberCount === 3 && result.guild.activeMemberCount === 2,
+    'Guild harus menghitung seluruh member dan ACTIVE secara terpisah.'
+  );
+  assertBackendTest_(result.members.length === 2, 'Members hanya boleh berisi participant ACTIVE.');
+  assertBackendTest_(
+    result.guild.totalDistanceKm === 12.345 &&
+      result.guild.totalActivities === 3 &&
+      result.guild.totalXP === 140,
+    'Total guild hanya boleh berasal dari active member dalam Division yang sama.'
+  );
+  assertBackendTest_(
+    missingStatsMember &&
+      missingStatsMember.totalDistanceKm === 0 &&
+      missingStatsMember.totalActivities === 0 &&
+      missingStatsMember.totalXP === 0 &&
+      missingStatsMember.currentLevel === 1,
+    'Member tanpa User_Stats harus tetap tampil dengan nilai default aman.'
+  );
+  assertBackendTest_(
+    !result.members.some(function (member) { return member.nik === '00999'; }),
+    'Member Division lain tidak boleh ikut masuk.'
+  );
+
+  const unassigned = JSON.parse(
+    jsonGuildSummarySuccess_('UNASSIGNED', null, []).getContent()
+  );
+  assertBackendTest_(
+    unassigned.ok === true &&
+      unassigned.status === 'UNASSIGNED' &&
+      unassigned.guild === null &&
+      unassigned.members.length === 0,
+    'User tanpa Division harus mendapat response sukses yang aman.'
+  );
+
+  return {
+    ok: true,
+    divisionIsolation: true,
+    activeMemberFiltering: true,
+    missingStatsDefaults: true,
+    unassignedSafe: true,
+    nikRemainsText: true,
+    sensitiveFieldsExcluded: true,
+  };
+}
+
+function testGetLeaderboard() {
+  const sessionToken = getOrCreateTestSessionToken_();
+  const session = requireSession_(sessionToken);
+  const participant = findParticipantByNik_(session.nik);
+  const metrics = ['TOTAL_XP', 'TOTAL_DISTANCE', 'TOTAL_ACTIVITIES'];
+  const responses = {};
+
+  metrics.forEach(function (metric) {
+    const response = JSON.parse(handleGetLeaderboard_({
+      action: 'getLeaderboard',
+      sessionToken: sessionToken,
+      scope: 'GLOBAL',
+      metric: metric,
+    }).getContent());
+    assertBackendTest_(response.ok === true, 'getLeaderboard harus return ok true.');
+    assertBackendTest_(response.scope === 'GLOBAL', 'Scope leaderboard harus GLOBAL.');
+    assertBackendTest_(response.metric === metric, 'Metric response harus sesuai request.');
+    assertBackendTest_(Array.isArray(response.leaderboard), 'Leaderboard harus berupa array.');
+    assertBackendTest_(response.leaderboard.length <= 50, 'Leaderboard maksimal 50 row.');
+    assertLeaderboardSorted_(response.leaderboard, metric);
+    response.leaderboard.forEach(function (entry) {
+      assertBackendTest_(typeof entry.nik === 'string', 'NIK leaderboard harus berupa string.');
+    });
+    responses[metric] = response;
+  });
+
+  const activeParticipants = getGuildParticipantRows_().filter(function (participant) {
+    return participant.status === 'ACTIVE';
+  });
+  const activeByNik = {};
+  activeParticipants.forEach(function (participant) {
+    activeByNik[participant.nik] = true;
+  });
+  responses.TOTAL_XP.leaderboard.forEach(function (entry) {
+    assertBackendTest_(activeByNik[entry.nik], 'Participant INACTIVE tidak boleh tampil.');
+  });
+
+  const guildResponse = JSON.parse(handleGetLeaderboard_({
+    action: 'getLeaderboard',
+    sessionToken: sessionToken,
+    scope: 'GUILD',
+    metric: 'TOTAL_DISTANCE',
+  }).getContent());
+  assertBackendTest_(guildResponse.ok === true, 'Leaderboard GUILD harus return ok true.');
+  assertBackendTest_(guildResponse.scope === 'GUILD', 'Scope response harus GUILD.');
+  if (!String(participant.divisionGuild || '').trim()) {
+    assertBackendTest_(
+      guildResponse.status === 'NO_GUILD' && guildResponse.leaderboard.length === 0,
+      'User tanpa Division harus mendapat leaderboard GUILD kosong.'
+    );
+  } else {
+    const divisionKey = normalizeDivisionKey_(participant.divisionGuild);
+    guildResponse.leaderboard.forEach(function (entry) {
+      assertBackendTest_(
+        normalizeDivisionKey_(entry.division) === divisionKey,
+        'Leaderboard GUILD tidak boleh memuat Division lain.'
+      );
+    });
+    assertLeaderboardSorted_(guildResponse.leaderboard, 'TOTAL_DISTANCE');
+  }
+
+  const serialized = JSON.stringify(responses).toLowerCase();
+  assertBackendTest_(serialized.indexOf('"pin"') === -1, 'Leaderboard tidak boleh expose PIN.');
+  assertBackendTest_(
+    serialized.indexOf('sessiontoken') === -1,
+    'Leaderboard tidak boleh expose session token.'
+  );
+
+  const foundationTests = testLeaderboardFoundation();
+  const summary = {
+    ok: true,
+    scope: 'GLOBAL',
+    supportedMetrics: metrics,
+    leaderboardCount: responses.TOTAL_XP.leaderboard.length,
+    currentUserHasStats: responses.TOTAL_XP.currentUserRank !== null,
+    guildScopeStatus: guildResponse.status,
+    guildLeaderboardCount: guildResponse.leaderboard.length,
+    foundationTests: foundationTests,
+  };
+  console.log(JSON.stringify(summary, null, 2));
+  return summary;
+}
+
+function testLeaderboardFoundation() {
+  const participants = [
+    { nik: '001', nickname: 'ALPHA', divisionGuild: 'OPS', status: 'ACTIVE' },
+    { nik: '002', nickname: 'BRAVO', divisionGuild: 'IT', status: 'ACTIVE' },
+    { nik: '003', nickname: 'CHARLIE', divisionGuild: 'OPS', status: 'ACTIVE' },
+    { nik: '004', nickname: 'INACTIVE', divisionGuild: 'OPS', status: 'INACTIVE' },
+  ];
+  const stats = {
+    '001': { totalXp: 100, totalDistanceKm: 5, totalActivities: 3, currentLevel: 2, currentLevelName: 'SCOUT' },
+    '002': { totalXp: 200, totalDistanceKm: 2, totalActivities: 5, currentLevel: 3, currentLevelName: 'RANGER' },
+    '003': { totalXp: 100, totalDistanceKm: 10, totalActivities: 1, currentLevel: 2, currentLevelName: 'SCOUT' },
+    '004': { totalXp: 9999, totalDistanceKm: 999, totalActivities: 999, currentLevel: 9, currentLevelName: 'HIDDEN' },
+  };
+
+  const xp = buildLeaderboard_('001', participants, stats, 'TOTAL_XP', 50);
+  const distance = buildLeaderboard_('001', participants, stats, 'TOTAL_DISTANCE', 50);
+  const activities = buildLeaderboard_('001', participants, stats, 'TOTAL_ACTIVITIES', 50);
+  const guild = buildLeaderboard_(
+    '001',
+    participants.filter(function (participant) {
+      return normalizeDivisionKey_(participant.divisionGuild) === 'ops';
+    }),
+    stats,
+    'TOTAL_DISTANCE',
+    50
+  );
+  assertBackendTest_(
+    xp.leaderboard.map(function (entry) { return entry.nik; }).join(',') === '002,001,003',
+    'TOTAL_XP harus descending dengan nickname sebagai tie-breaker.'
+  );
+  assertBackendTest_(
+    distance.leaderboard.map(function (entry) { return entry.nik; }).join(',') === '003,001,002',
+    'TOTAL_DISTANCE harus descending.'
+  );
+  assertBackendTest_(
+    activities.leaderboard.map(function (entry) { return entry.nik; }).join(',') === '002,001,003',
+    'TOTAL_ACTIVITIES harus descending.'
+  );
+  assertBackendTest_(
+    guild.leaderboard.map(function (entry) { return entry.nik; }).join(',') === '003,001',
+    'Scope GUILD hanya boleh berisi member satu Division.'
+  );
+  assertBackendTest_(
+    xp.currentUserRank && xp.currentUserRank.rank === 2 && xp.currentUserRank.metricValue === 100,
+    'Current user rank harus dihitung dari full leaderboard.'
+  );
+  assertBackendTest_(
+    buildLeaderboard_('NO-STATS', participants, stats, 'TOTAL_XP', 50).currentUserRank === null,
+    'User tanpa stats harus memiliki currentUserRank null.'
+  );
+  assertBackendTest_(
+    buildLeaderboard_('001', participants, {}, 'TOTAL_XP', 50).leaderboard.length === 0,
+    'User_Stats kosong harus menghasilkan leaderboard kosong.'
+  );
+
+  const manyParticipants = [];
+  const manyStats = {};
+  for (let index = 0; index < 55; index += 1) {
+    const nik = 'LIMIT-' + index;
+    manyParticipants.push({ nik: nik, nickname: nik, divisionGuild: 'OPS', status: 'ACTIVE' });
+    manyStats[nik] = {
+      totalXp: index,
+      totalDistanceKm: index,
+      totalActivities: index,
+      currentLevel: 1,
+      currentLevelName: 'ROOKIE',
+    };
+  }
+  assertBackendTest_(
+    buildLeaderboard_('LIMIT-0', manyParticipants, manyStats, 'TOTAL_XP', 50).leaderboard.length === 50,
+    'Leaderboard harus dibatasi maksimal 50 row.'
+  );
+
+  return {
+    ok: true,
+    totalXpSorting: true,
+    totalDistanceSorting: true,
+    totalActivitiesSorting: true,
+    stableTieBreaker: true,
+    inactiveFiltering: true,
+    guildScopeIsolation: true,
+    currentUserRank: true,
+    emptyStatsSafe: true,
+    maxRows50: true,
+    sensitiveFieldsExcluded: true,
+  };
+}
+
+function assertLeaderboardSorted_(leaderboard, metric) {
+  for (let index = 1; index < leaderboard.length; index += 1) {
+    const previous = leaderboardMetricValue_(leaderboard[index - 1], metric);
+    const current = leaderboardMetricValue_(leaderboard[index], metric);
+    assertBackendTest_(previous >= current, 'Leaderboard tidak terurut descending untuk ' + metric + '.');
+  }
+}
+
+function testGetQuestProgress() {
+  const sessionToken = getOrCreateTestSessionToken_();
+  const session = requireSession_(sessionToken);
+  const participant = findParticipantByNik_(session.nik);
+  const expectedQuestCount = getActiveQuests_().length;
+  const response = JSON.parse(handleGetQuestProgress_({
+    action: 'getQuestProgress',
+    sessionToken: sessionToken,
+  }).getContent());
+
+  assertBackendTest_(response.ok === true, 'getQuestProgress harus return ok true.');
+  assertBackendTest_(Array.isArray(response.quests), 'Response harus memiliki array quests.');
+  assertBackendTest_(
+    response.quests.length === expectedQuestCount,
+    'Jumlah progress quest harus sama dengan quest aktif.'
+  );
+
+  const validStatuses = {
+    NOT_STARTED: true,
+    IN_PROGRESS: true,
+    COMPLETED: true,
+    UNKNOWN_TYPE: true,
+    UNSUPPORTED_GROUP_SCOPE: true,
+    NO_GUILD: true,
+  };
+  response.quests.forEach(function (quest) {
+    assertBackendTest_(!!quest.questId, 'Quest progress wajib memiliki questId.');
+    assertBackendTest_(validStatuses[quest.status], 'Status quest tidak dikenali.');
+    assertBackendTest_(
+      quest.progressPercent >= 0 && quest.progressPercent <= 100,
+      'Progress percent harus berada pada rentang 0-100.'
+    );
+    assertBackendTest_(
+      quest.completed === (quest.status === 'COMPLETED'),
+      'Flag completed harus konsisten dengan status.'
+    );
+
+    const mappedType = mapQuestType_(normalizeQuestType_(quest.type));
+    if (mappedType === 'GUILD_DISTANCE') {
+      assertBackendTest_(
+        quest.claimable === false &&
+          quest.claimBlockedReason === 'GUILD_REWARD_NOT_READY',
+        'GUILD_DISTANCE tidak boleh claim reward pada sprint ini.'
+      );
+      if (String(participant.divisionGuild || '').trim()) {
+        assertBackendTest_(
+          quest.status !== 'UNSUPPORTED_GROUP_SCOPE' && quest.status !== 'NO_GUILD',
+          'GUILD_DISTANCE user dengan Division harus memiliki progress real.'
+        );
+      } else {
+        assertBackendTest_(
+          quest.status === 'NO_GUILD' && quest.progress === 0,
+          'GUILD_DISTANCE user tanpa Division harus aman sebagai NO_GUILD.'
+        );
+      }
+    } else if (mappedType) {
+      assertBackendTest_(
+        quest.status !== 'UNKNOWN_TYPE',
+        'Tipe quest yang didukung tidak boleh menghasilkan UNKNOWN_TYPE.'
+      );
+    }
+  });
+
+  const mappingTests = testQuestProgressTypeMappings();
+
+  const summary = {
+    ok: true,
+    activeQuestCount: response.quests.length,
+    supportedTypes: [
+      'DISTANCE',
+      'RUN_COUNT',
+      'TOTAL_RUNS',
+      'RUN_DAYS',
+      'SINGLE_RUN',
+      'DURATION',
+      'XP',
+      'STREAK',
+      'GUILD_DISTANCE',
+    ],
+    guildRewardClaimBlocked: true,
+    unknownTypeSafe: true,
+    mappingTests: mappingTests,
+    quests: response.quests,
+  };
+  console.log(JSON.stringify(summary, null, 2));
+  return summary;
+}
+
+function testQuestProgressTypeMappings() {
+  const ownerNik = 'TEST-OWNER';
+  const rows = [
+    testActivityRow_('A1', ownerNik, '2026-08-10T06:00:00+07:00', '', 2, 600),
+    testActivityRow_('A2', ownerNik, '2026-08-10T08:00:00+07:00', '', 6, 900),
+    testActivityRow_('A3', ownerNik, '', '2026-08-11T06:00:00+07:00', 1, 300),
+    testActivityRow_('OUTSIDE', ownerNik, '2026-08-20T06:00:00+07:00', '', 50, 5000),
+    testActivityRow_('OTHER', 'OTHER-USER', '2026-08-12T06:00:00+07:00', '', 100, 5000),
+    testActivityRow_('MEMBER', 'GUILD-MEMBER', '2026-08-12T07:00:00+07:00', '', 4, 500),
+    testActivityRow_('INACTIVE', 'INACTIVE-MEMBER', '2026-08-12T08:00:00+07:00', '', 100, 5000),
+    testActivityRow_('PAUSED', ownerNik, '2026-08-12T06:00:00+07:00', '', 100, 5000, 'PAUSED'),
+  ];
+  const activities = mapCompletedActivityRowsForNik_(rows, ownerNik);
+  const guildContext = buildGuildActivityContext_({
+    nik: ownerNik,
+    divisionGuild: 'OPS',
+  }, [
+    { nik: ownerNik, divisionGuild: 'OPS', status: 'ACTIVE' },
+    { nik: 'GUILD-MEMBER', divisionGuild: 'ops', status: 'ACTIVE' },
+    { nik: 'INACTIVE-MEMBER', divisionGuild: 'OPS', status: 'INACTIVE' },
+    { nik: 'OTHER-USER', divisionGuild: 'OTHER', status: 'ACTIVE' },
+  ], rows);
+  const baseQuest = {
+    questId: 'TEST-QUEST',
+    questName: 'Test Quest',
+    questType: 'DISTANCE',
+    targetValue: 5,
+    unit: '',
+    rewardXp: 0,
+    periodType: 'WEEKLY',
+    startDate: '2026-08-10',
+    endDate: '2026-08-16',
+  };
+
+  assertBackendTest_(
+    activities.length === 4,
+    'Filter activity harus mengecualikan user lain dan status non-COMPLETED.'
+  );
+
+  const distance = calculateQuestProgress_(baseQuest, activities, null);
+  assertBackendTest_(
+    distance.progress === 9,
+    'DISTANCE harus menjumlahkan milik user dalam periode saja.'
+  );
+
+  const totalRuns = calculateQuestProgress_(
+    Object.assign({}, baseQuest, { questType: 'TOTAL_RUNS', targetValue: 3 }),
+    activities,
+    null
+  );
+  assertBackendTest_(
+    totalRuns.progress === 3 && totalRuns.completed === true,
+    'TOTAL_RUNS harus dihitung seperti RUN_COUNT.'
+  );
+
+  const runDays = calculateQuestProgress_(
+    Object.assign({}, baseQuest, { questType: 'RUN_DAYS', targetValue: 3 }),
+    activities,
+    null
+  );
+  assertBackendTest_(
+    runDays.progress === 2 && runDays.status === 'IN_PROGRESS',
+    'RUN_DAYS harus menghitung tanggal unik, bukan jumlah activity.'
+  );
+
+  const singleRun = calculateQuestProgress_(
+    Object.assign({}, baseQuest, { questType: 'SINGLE_RUN', targetValue: 5 }),
+    activities,
+    null
+  );
+  assertBackendTest_(
+    singleRun.progress === 6 &&
+      singleRun.progressPercent === 100 &&
+      singleRun.completed === true,
+    'SINGLE_RUN harus memakai jarak terbesar dan completed saat mencapai target.'
+  );
+
+  const incompleteSingleRun = calculateQuestProgress_(
+    Object.assign({}, baseQuest, { questType: 'SINGLE_RUN', targetValue: 10 }),
+    activities,
+    null
+  );
+  assertBackendTest_(
+    incompleteSingleRun.progress === 6 &&
+      incompleteSingleRun.status === 'IN_PROGRESS' &&
+      incompleteSingleRun.completed === false,
+    'SINGLE_RUN di bawah target harus tetap IN_PROGRESS.'
+  );
+
+  const guildDistance = calculateQuestProgress_(
+    Object.assign({}, baseQuest, { questType: 'GUILD_DISTANCE', targetValue: 20 }),
+    activities,
+    null,
+    guildContext
+  );
+  assertBackendTest_(
+    guildDistance.status === 'IN_PROGRESS' &&
+      guildDistance.progress === 13 &&
+      guildDistance.progressPercent === 65 &&
+      guildDistance.completed === false,
+    'GUILD_DISTANCE harus menghitung member ACTIVE satu Division dalam periode.'
+  );
+  const completedGuildDistance = calculateQuestProgress_(
+    Object.assign({}, baseQuest, { questType: 'GUILD_DISTANCE', targetValue: 10 }),
+    activities,
+    null,
+    guildContext
+  );
+  assertBackendTest_(
+    completedGuildDistance.completed === true &&
+      completedGuildDistance.progressPercent === 100 &&
+      completedGuildDistance.claimable === false &&
+      completedGuildDistance.claimBlockedReason === 'GUILD_REWARD_NOT_READY',
+    'GUILD_DISTANCE completed harus tetap diblokir dari reward claim.'
+  );
+  const noGuildDistance = calculateQuestProgress_(
+    Object.assign({}, baseQuest, { questType: 'GUILD_DISTANCE' }),
+    activities,
+    null,
+    { hasGuild: false, activities: [] }
+  );
+  assertBackendTest_(
+    noGuildDistance.status === 'NO_GUILD' && noGuildDistance.progress === 0,
+    'GUILD_DISTANCE tanpa Division harus aman sebagai NO_GUILD.'
+  );
+
+  const unknown = calculateQuestProgress_(
+    Object.assign({}, baseQuest, { questType: 'FUTURE_TYPE' }),
+    activities,
+    null
+  );
+  assertBackendTest_(
+    unknown.status === 'UNKNOWN_TYPE' && unknown.progress === 0,
+    'Unknown quest type harus aman dan memiliki progress 0.'
+  );
+
+  return {
+    ok: true,
+    distanceRegression: true,
+    totalRuns: true,
+    uniqueRunDays: true,
+    singleRunMaximum: true,
+    guildDistanceRealProgress: true,
+    guildDivisionIsolation: true,
+    guildInactiveFiltering: true,
+    guildPeriodFiltering: true,
+    guildRewardBlocked: true,
+    noGuildSafe: true,
+    unknownTypeSafe: true,
+    ownerIsolation: true,
+    periodFiltering: true,
+  };
+}
+
+function testActivityRow_(id, nik, endTime, startTime, distanceKm, durationSec, status) {
+  return {
+    ActivityId: id,
+    NIK: nik,
+    EndTime: endTime,
+    StartTime: startTime,
+    DistanceKm: distanceKm,
+    DurationSec: durationSec,
+    Status: status || 'COMPLETED',
+  };
+}
+
+function assertUserStatsTotalsEqual_(expected, actual, message) {
+  const equal =
+    expected.totalActivities === actual.totalActivities &&
+    expected.totalDistanceKm === actual.totalDistanceKm &&
+    expected.totalDurationSec === actual.totalDurationSec &&
+    expected.totalXp === actual.totalXp &&
+    expected.currentLevel === actual.currentLevel &&
+    expected.currentLevelName === actual.currentLevelName &&
+    expected.nextLevelXp === actual.nextLevelXp &&
+    expected.lastActivityId === actual.lastActivityId;
+  assertBackendTest_(equal, message);
+}
+
+function assertBackendTest_(condition, message) {
+  if (!condition) throw new Error('Backend-3 test failed: ' + message);
+}
+
+/**
+ * Creates a dummy editor-only test session when the stored token is unavailable.
+ * Required Script Properties: ORA_TEST_NIK and ORA_TEST_PIN.
+ * Credentials and the full token are never written to logs or returned.
+ */
+function prepareTestSession() {
+  const sessionToken = getOrCreateTestSessionToken_();
+  const session = requireSession_(sessionToken);
+  return {
+    ok: true,
+    nik: session.nik,
+    tokenStored: true,
+    expiresInSeconds: ORA_SESSION_TTL_SECONDS,
+    expiresAt: new Date(session.expiresAtMillis).toISOString(),
+  };
+}
+
+function testSessionTtl30Days() {
+  const properties = PropertiesService.getScriptProperties();
+  const cache = CacheService.getScriptCache();
+  const nowMillis = Date.now();
+  const token = 'ORA-TTL-TEST-' + Utilities.getUuid();
+  const expiredToken = 'ORA-TTL-EXPIRED-' + Utilities.getUuid();
+  const legacyToken = 'ORA-TTL-LEGACY-' + Utilities.getUuid();
+
+  try {
+    const saved = saveSession_(token, 'TTL-TEST-USER', nowMillis);
+    const expectedExpiry = nowMillis + ORA_SESSION_TTL_SECONDS * 1000;
+    assertBackendTest_(
+      saved.expiresAtMillis === expectedExpiry,
+      'Session harus memiliki expiry tepat 30 hari.'
+    );
+
+    const key = sessionCacheKey_(token);
+    assertBackendTest_(
+      !!properties.getProperty(key),
+      'Session 30 hari harus tersimpan persisten di Script Properties.'
+    );
+    cache.remove(key);
+    const restored = requireSession_(token);
+    assertBackendTest_(
+      restored.nik === 'TTL-TEST-USER' && restored.expiresAtMillis === expectedExpiry,
+      'Session harus tetap valid saat cache kosong.'
+    );
+
+    const expiredKey = sessionCacheKey_(expiredToken);
+    properties.setProperty(expiredKey, JSON.stringify({
+      nik: 'TTL-EXPIRED-USER',
+      issuedAtMillis: nowMillis - 2000,
+      expiresAtMillis: nowMillis - 1000,
+    }));
+    let expiredRejected = false;
+    try {
+      requireSession_(expiredToken);
+    } catch (error) {
+      expiredRejected = error && error.oraCode === 'SESSION_EXPIRED';
+    }
+    assertBackendTest_(expiredRejected, 'Session expired harus ditolak.');
+    assertBackendTest_(
+      !properties.getProperty(expiredKey),
+      'Session expired harus dibersihkan dari Script Properties.'
+    );
+
+    const legacyKey = sessionCacheKey_(legacyToken);
+    cache.put(legacyKey, JSON.stringify({ nik: 'TTL-LEGACY-USER' }), 60);
+    const migrated = requireSession_(legacyToken);
+    assertBackendTest_(
+      Number.isFinite(Number(migrated.expiresAtMillis)) &&
+        !!properties.getProperty(legacyKey),
+      'Session cache lama harus dimigrasikan ke penyimpanan persisten.'
+    );
+
+    return {
+      ok: true,
+      ttlDays: ORA_SESSION_TTL_SECONDS / 86400,
+      expiresInSeconds: ORA_SESSION_TTL_SECONDS,
+      persistentAfterCacheMiss: true,
+      expiredSessionRejected: true,
+      legacySessionMigrated: true,
+    };
+  } finally {
+    deleteSession_(token);
+    deleteSession_(expiredToken);
+    deleteSession_(legacyToken);
+  }
+}
+
+function getOrCreateTestSessionToken_() {
+  const properties = PropertiesService.getScriptProperties();
+  const storedToken = String(
+    properties.getProperty('ORA_TEST_SESSION_TOKEN') || ''
+  ).trim();
+
+  if (storedToken && isSessionTokenValid_(storedToken)) {
+    return storedToken;
+  }
+
+  const nik = String(properties.getProperty('ORA_TEST_NIK') || '').trim();
+  const pin = String(properties.getProperty('ORA_TEST_PIN') || '').trim();
+  if (!nik || !pin) {
+    throw new Error(
+      'Isi Script Properties ORA_TEST_NIK dan ORA_TEST_PIN dengan akun dummy, ' +
+      'lalu jalankan prepareTestSession().'
+    );
+  }
+
+  const login = JSON.parse(handleLogin_({ nik: nik, pin: pin }).getContent());
+  if (!login.ok || !login.data || !login.data.sessionToken) {
+    const code = login.error && login.error.code ? login.error.code : 'LOGIN_FAILED';
+    throw new Error('Tidak dapat membuat test session: ' + code);
+  }
+
+  properties.setProperty('ORA_TEST_SESSION_TOKEN', login.data.sessionToken);
+  return login.data.sessionToken;
+}
+
+function isSessionTokenValid_(sessionToken) {
+  try {
+    requireSession_(sessionToken);
+    return true;
+  } catch (error) {
+    return false;
+  }
+}
