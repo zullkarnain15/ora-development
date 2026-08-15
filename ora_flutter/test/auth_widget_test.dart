@@ -242,6 +242,55 @@ void main() {
     expect(store.session, isNull);
   });
 
+  testWidgets('iPhone X-sized viewport keeps login and navigation usable', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(375, 812);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+
+    await tester.pumpWidget(
+      _host(
+        LoginScreen(
+          errorMessage: null,
+          isLoading: false,
+          onClearError: () {},
+          onLogin: (_, _) async {},
+        ),
+      ),
+    );
+    expect(find.byKey(const Key('login_submit')), findsOneWidget);
+    expect(tester.takeException(), isNull);
+
+    final controller = AuthController(
+      AuthRepository(api: _UnusedApi(), sessionStore: MemorySessionStore()),
+    );
+    final session = UserSession(
+      sessionToken: 'fixture',
+      nik: '1001',
+      nickname: 'RUNNER',
+      divisionGuild: 'OPS',
+      status: 'ACTIVE',
+      expiresAt: DateTime.now().add(const Duration(days: 1)),
+    );
+    await tester.pumpWidget(
+      _host(
+        AppShell(
+          session: session,
+          authController: controller,
+          featureControllerFactory: _featureFactory,
+        ),
+      ),
+    );
+    for (final destination in const ['quest', 'run', 'guild', 'you']) {
+      await tester.tap(find.byKey(Key('nav_$destination')));
+      await tester.pump(const Duration(milliseconds: 50));
+      expect(tester.takeException(), isNull, reason: destination);
+    }
+    expect(find.byKey(const Key('open_settings')), findsOneWidget);
+  });
+
   testWidgets('system back returns to Home before requiring double back exit', (
     tester,
   ) async {

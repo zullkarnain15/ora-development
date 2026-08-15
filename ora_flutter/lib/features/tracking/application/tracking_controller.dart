@@ -7,21 +7,28 @@ import '../../activity/data/activity_store.dart';
 import '../../activity/domain/final_activity.dart';
 import '../../auth/domain/auth_models.dart';
 import '../data/native_tracking_adapter.dart';
+import '../data/tracking_adapter_factory.dart';
 import '../domain/location_engine.dart';
 import '../domain/run_time_engine.dart';
 import '../domain/tracking_models.dart';
+import '../domain/tracking_policy_factory.dart';
 
 class TrackingController extends ChangeNotifier with WidgetsBindingObserver {
   TrackingController({
     required this.user,
     required this.store,
     TrackingNativeAdapter? nativeAdapter,
-    this.policy = TrackingPolicy.current,
+    TrackingPolicy? policy,
     this.gpsSearchTimeout = const Duration(seconds: 20),
     this.onActivitySaved,
-  }) : nativeAdapter = nativeAdapter ?? const MethodChannelTrackingAdapter(),
-       _locationEngine = RunLocationEngine(policy: policy),
-       _preflightEngine = RunLocationEngine(policy: policy) {
+  }) : nativeAdapter = nativeAdapter ?? createTrackingAdapter(),
+       policy = policy ?? createTrackingPolicy(),
+       _locationEngine = RunLocationEngine(
+         policy: policy ?? createTrackingPolicy(),
+       ),
+       _preflightEngine = RunLocationEngine(
+         policy: policy ?? createTrackingPolicy(),
+       ) {
     _processClock.start();
   }
 
@@ -895,6 +902,9 @@ class TrackingController extends ChangeNotifier with WidgetsBindingObserver {
     WidgetsBinding.instance.removeObserver(this);
     _ticker?.cancel();
     if (session == null) unawaited(nativeAdapter.cancelPrepare());
+    if (nativeAdapter case final DisposableTrackingAdapter disposable) {
+      unawaited(disposable.disposeTrackingResources());
+    }
     unawaited(_eventSubscription?.cancel());
     _processClock.stop();
     super.dispose();

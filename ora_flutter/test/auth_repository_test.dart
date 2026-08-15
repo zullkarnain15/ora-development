@@ -91,6 +91,24 @@ void main() {
       );
     });
 
+    test('network failure is not reported as invalid credentials', () async {
+      final api = _FakeAuthApi()
+        ..loginFailure = const BackendFailure(
+          BackendFailureKind.connection,
+          'offline',
+        );
+      await expectLater(
+        repository(api, MemorySessionStore()).login('1001', '1234'),
+        throwsA(
+          isA<AuthFailure>().having(
+            (error) => error.message,
+            'message',
+            'Unable to connect to ORA. Check your connection and try again.',
+          ),
+        ),
+      );
+    });
+
     test('inactive account is rejected', () async {
       final api = _FakeAuthApi()
         ..loginResult = const LoginResult(

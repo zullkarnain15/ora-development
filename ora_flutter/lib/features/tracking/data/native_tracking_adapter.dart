@@ -19,6 +19,13 @@ abstract interface class TrackingNativeAdapter implements TrackingClock {
   Future<void> acknowledgePendingAction();
 }
 
+/// Optional lifecycle hook for adapters that own in-process resources. Native
+/// Android tracking intentionally does not implement this because its service
+/// must outlive the Flutter controller.
+abstract interface class DisposableTrackingAdapter {
+  Future<void> disposeTrackingResources();
+}
+
 class NativeTrackingFailure implements Exception {
   const NativeTrackingFailure(this.code, this.message);
   final String code;

@@ -101,10 +101,13 @@ class PixelBadge extends StatelessWidget {
       borderRadius: BorderRadius.circular(3),
       border: Border.all(color: OraColors.gold),
     ),
-    child: Text(
-      text,
-      textAlign: TextAlign.center,
-      style: OraTextStyles.displaySmall,
+    child: FittedBox(
+      fit: BoxFit.scaleDown,
+      child: Text(
+        text,
+        textAlign: TextAlign.center,
+        style: OraTextStyles.displaySmall,
+      ),
     ),
   );
 }

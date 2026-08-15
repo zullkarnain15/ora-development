@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 
 import '../../../core/theme/ora_theme.dart';
@@ -22,6 +23,10 @@ class RunScreen extends StatelessWidget {
             assetName: 'run.png',
           ),
           const SizedBox(height: 16),
+          if (kIsWeb) ...[
+            const _WebTrackingNotice(),
+            const SizedBox(height: 12),
+          ],
           _StatusBanner(controller: controller),
           const SizedBox(height: 14),
           if (controller.status == TrackingStatus.recoverableSession)
@@ -33,6 +38,26 @@ class RunScreen extends StatelessWidget {
           ],
         ],
       ),
+    ),
+  );
+}
+
+class _WebTrackingNotice extends StatelessWidget {
+  const _WebTrackingNotice();
+
+  @override
+  Widget build(BuildContext context) => const OraCard(
+    padding: EdgeInsets.all(12),
+    child: Row(
+      children: [
+        OraIcon('warning.png', size: 22),
+        SizedBox(width: 10),
+        Expanded(
+          child: Text(
+            'FOR BEST TRACKING ACCURACY, KEEP ORA OPEN AND THE SCREEN AWAKE.',
+          ),
+        ),
+      ],
     ),
   );
 }

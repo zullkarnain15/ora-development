@@ -1,5 +1,7 @@
 import 'dart:async';
-import 'dart:io';
+
+import 'reachability_probe_io.dart'
+    if (dart.library.js_interop) 'reachability_probe_web.dart';
 
 typedef ReachabilityProbe = Future<bool> Function();
 
@@ -8,7 +10,7 @@ class NetworkReachabilityMonitor {
     required this.onRestored,
     ReachabilityProbe? probe,
     this.interval = const Duration(seconds: 20),
-  }) : _probe = probe ?? _defaultProbe;
+  }) : _probe = probe ?? defaultReachabilityProbe;
 
   final FutureOr<void> Function() onRestored;
   final Duration interval;
@@ -45,11 +47,5 @@ class NetworkReachabilityMonitor {
     } finally {
       _checking = false;
     }
-  }
-
-  static Future<bool> _defaultProbe() async {
-    final addresses = await InternetAddress.lookup('script.google.com');
-    return addresses.isNotEmpty &&
-        addresses.any((address) => address.rawAddress.isNotEmpty);
   }
 }

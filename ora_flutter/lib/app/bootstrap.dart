@@ -7,8 +7,9 @@ import '../core/network/apps_script_client.dart';
 import '../features/auth/application/auth_controller.dart';
 import '../features/auth/application/auth_repository.dart';
 import '../features/auth/data/auth_api.dart';
-import '../features/auth/data/session_store.dart';
 import '../features/activity/data/activity_store.dart';
+import '../features/activity/data/activity_store_factory.dart';
+import '../features/auth/data/session_store_factory.dart';
 import '../features/dashboard/application/feature_controller.dart';
 import '../features/dashboard/data/ora_feature_api.dart';
 import 'ora_app.dart';
@@ -31,11 +32,11 @@ void bootstrapOra() {
   authController = AuthController(
     AuthRepository(
       api: AppsScriptAuthApi(client),
-      sessionStore: const NativeSecureSessionStore(),
+      sessionStore: createSessionStore(),
     ),
   );
   final featureApi = AppsScriptFeatureApi(client);
-  final activityStore = SqfliteActivityStore();
+  final ActivityStore activityStore = createActivityStore();
   runApp(
     OraApp(
       authController: authController,

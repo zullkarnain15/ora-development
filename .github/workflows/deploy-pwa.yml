@@ -1,0 +1,67 @@
+name: Deploy ORA PWA to GitHub Pages
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - pwa-pages
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    name: Validate and build Web
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2.23.0
+        with:
+          channel: stable
+          flutter-version: 3.47.0
+          cache: true
+
+      - name: Restore dependencies
+        working-directory: ora_flutter
+        run: flutter pub get
+
+      - name: Analyze
+        working-directory: ora_flutter
+        run: flutter analyze
+
+      - name: Test
+        working-directory: ora_flutter
+        run: flutter test
+
+      - name: Build production PWA
+        working-directory: ora_flutter
+        run: flutter build web --release --base-href /ora-development/
+
+      - name: Configure GitHub Pages
+        uses: actions/configure-pages@v6
+
+      - name: Upload Pages artifact
+        uses: actions/upload-pages-artifact@v5
+        with:
+          path: ora_flutter/build/web
+
+  deploy:
+    name: Deploy GitHub Pages
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    runs-on: ubuntu-latest
+    needs: build
+    steps:
+      - name: Deploy Pages artifact
+        id: deployment
+        uses: actions/deploy-pages@v5
