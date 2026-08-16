@@ -157,6 +157,14 @@ class RunLocationEngine {
       policy.minSegmentMeters,
       accuracyThreshold,
     );
+    if (segment < policy.minSegmentMeters) {
+      return _reject(
+        LocationRejectReason.minimumSegment,
+        segment: segment,
+        threshold: movementThreshold,
+        speed: speed,
+      );
+    }
     if (segment < movementThreshold) {
       return _reject(
         LocationRejectReason.jitter,

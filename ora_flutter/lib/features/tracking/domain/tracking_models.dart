@@ -63,6 +63,14 @@ extension LocationDecisionTypeValue on LocationDecisionType {
     LocationDecisionType.rejected => 'REJECTED',
     LocationDecisionType.ignored => 'IGNORED',
   };
+
+  static LocationDecisionType parse(String? value) => switch (value) {
+    'BASELINE' => LocationDecisionType.baseline,
+    'REENTRY_BASELINE' => LocationDecisionType.reentryBaseline,
+    'ACCEPTED' => LocationDecisionType.accepted,
+    'REJECTED' => LocationDecisionType.rejected,
+    _ => LocationDecisionType.ignored,
+  };
 }
 
 enum LocationRejectReason {
@@ -75,6 +83,7 @@ enum LocationRejectReason {
   poorAccuracy,
   duplicateCoordinate,
   invalidSegment,
+  minimumSegment,
   jitter,
   implausibleSpeed,
   continuityUnconfirmed,
@@ -91,9 +100,27 @@ extension LocationRejectReasonValue on LocationRejectReason {
     LocationRejectReason.poorAccuracy => 'POOR_ACCURACY',
     LocationRejectReason.duplicateCoordinate => 'DUPLICATE_COORDINATE',
     LocationRejectReason.invalidSegment => 'INVALID_SEGMENT',
+    LocationRejectReason.minimumSegment => 'MINIMUM_SEGMENT',
     LocationRejectReason.jitter => 'JITTER',
     LocationRejectReason.implausibleSpeed => 'IMPLAUSIBLE_SPEED',
     LocationRejectReason.continuityUnconfirmed => 'CONTINUITY_UNCONFIRMED',
+  };
+
+  static LocationRejectReason? parse(String? value) => switch (value) {
+    'NOT_TRACKING' => LocationRejectReason.notTracking,
+    'INVALID_COORDINATES' => LocationRejectReason.invalidCoordinates,
+    'FUTURE_TIMESTAMP' => LocationRejectReason.futureTimestamp,
+    'STALE_LOCATION' => LocationRejectReason.staleLocation,
+    'OUT_OF_ORDER' => LocationRejectReason.outOfOrder,
+    'MISSING_ACCURACY' => LocationRejectReason.missingAccuracy,
+    'POOR_ACCURACY' => LocationRejectReason.poorAccuracy,
+    'DUPLICATE_COORDINATE' => LocationRejectReason.duplicateCoordinate,
+    'INVALID_SEGMENT' => LocationRejectReason.invalidSegment,
+    'MINIMUM_SEGMENT' => LocationRejectReason.minimumSegment,
+    'JITTER' => LocationRejectReason.jitter,
+    'IMPLAUSIBLE_SPEED' => LocationRejectReason.implausibleSpeed,
+    'CONTINUITY_UNCONFIRMED' => LocationRejectReason.continuityUnconfirmed,
+    _ => null,
   };
 
   String get message => switch (this) {
@@ -106,6 +133,7 @@ extension LocationRejectReasonValue on LocationRejectReason {
     LocationRejectReason.poorAccuracy => 'poor accuracy',
     LocationRejectReason.duplicateCoordinate => 'duplicate coordinate',
     LocationRejectReason.invalidSegment => 'invalid segment distance',
+    LocationRejectReason.minimumSegment => 'movement below minimum segment',
     LocationRejectReason.jitter => 'movement below jitter threshold',
     LocationRejectReason.implausibleSpeed => 'implausible running speed',
     LocationRejectReason.continuityUnconfirmed =>
@@ -446,6 +474,35 @@ class PersistedPointDecision {
         ? decision.segmentMeters
         : 0,
   };
+
+  factory PersistedPointDecision.fromMap(Map<String, Object?> map) {
+    final decisionType = LocationDecisionTypeValue.parse(
+      map['decision'] as String?,
+    );
+    return PersistedPointDecision(
+      sessionId: map['sessionId']! as String,
+      sample: RawLocationSample(
+        latitude: (map['latitude']! as num).toDouble(),
+        longitude: (map['longitude']! as num).toDouble(),
+        accuracyMeters: (map['accuracyMeters'] as num?)?.toDouble(),
+        provider: map['provider'] as String? ?? 'unknown',
+        providerMonotonicMillis: (map['providerMonotonicMillis']! as num)
+            .toInt(),
+        receivedMonotonicMillis: (map['receivedMonotonicMillis']! as num)
+            .toInt(),
+        epochMillis: (map['epochMillis']! as num).toInt(),
+        sequence: (map['sequence']! as num).toInt(),
+        isMocked: ((map['isMocked'] as num?)?.toInt() ?? 0) == 1,
+      ),
+      decision: LocationDecision(
+        type: decisionType,
+        reason: LocationRejectReasonValue.parse(map['rejectReason'] as String?),
+        segmentMeters: decisionType == LocationDecisionType.accepted
+            ? ((map['segmentMeters'] as num?)?.toDouble() ?? 0)
+            : 0,
+      ),
+    );
+  }
 }
 
 class NativeClockSnapshot {

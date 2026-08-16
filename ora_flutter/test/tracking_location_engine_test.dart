@@ -86,7 +86,7 @@ void main() {
         engine
             .process(_point(longitude: _lon + .000005, seconds: 3, sequence: 3))
             .reason,
-        LocationRejectReason.jitter,
+        LocationRejectReason.minimumSegment,
       );
       expect(engine.totalDistanceMeters, 0);
     });
