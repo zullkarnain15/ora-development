@@ -120,4 +120,21 @@ void main() {
     await store.discardRun('S1', '1001');
     expect(await store.recoverableRun('1001'), isNull);
   });
+
+  test('field point evidence remains owner and session scoped', () async {
+    final store = MemoryActivityStore();
+    final run = _run();
+    await store.createRun(run, _event('E1'));
+    await store.recordPointDecision(
+      run,
+      _point(
+        sequence: 1,
+        decision: const LocationDecision(type: LocationDecisionType.baseline),
+      ),
+    );
+
+    expect(await store.pointDecisions('S1', '1001'), hasLength(1));
+    expect(await store.pointDecisions('S1', '2002'), isEmpty);
+    expect(await store.pointDecisions('OTHER', '1001'), isEmpty);
+  });
 }

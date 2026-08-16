@@ -41,6 +41,7 @@ abstract interface class ActivityStore {
     required String reason,
     required int markedAtMillis,
   });
+  Future<bool> removeLocalData(String activityId, String ownerNik);
   Future<bool> deleteNotEligible(String activityId, String ownerNik);
   Future<FinalActivity?> latest(String ownerNik);
   Future<List<FinalActivity>> newestFirst(String ownerNik);
@@ -51,8 +52,15 @@ abstract interface class ActivityStore {
     RunSession session,
     PersistedPointDecision point,
   );
+  Future<List<PersistedPointDecision>> pointDecisions(
+    String sessionId,
+    String ownerNik,
+  );
   Future<RunSession?> recoverableRun(String ownerNik);
-  Future<FinalActivity> finalizeRun(RunSession session);
+  Future<FinalActivity> finalizeRun(
+    RunSession session, {
+    double? finalDistanceMeters,
+  });
   Future<void> discardRun(String sessionId, String ownerNik);
 }
 
@@ -452,6 +460,23 @@ WHERE queueId = ? AND ownerNik = ? AND state NOT IN (?, ?)''',
 
   @override
   Future<bool> deleteNotEligible(String activityId, String ownerNik) async {
+    return _removeLocalData(
+      activityId,
+      ownerNik,
+      allowedStatuses: const {ActivitySyncStatus.notEligible},
+    );
+  }
+
+  @override
+  Future<bool> removeLocalData(String activityId, String ownerNik) async {
+    return _removeLocalData(activityId, ownerNik);
+  }
+
+  Future<bool> _removeLocalData(
+    String activityId,
+    String ownerNik, {
+    Set<ActivitySyncStatus>? allowedStatuses,
+  }) async {
     return (await _db).transaction((txn) async {
       final activities = await txn.query(
         'activities',
@@ -460,9 +485,11 @@ WHERE queueId = ? AND ownerNik = ? AND state NOT IN (?, ?)''',
         whereArgs: [activityId, ownerNik],
         limit: 1,
       );
-      if (activities.isEmpty ||
-          activities.single['syncStatus'] !=
-              ActivitySyncStatus.notEligible.value) {
+      if (activities.isEmpty) return false;
+      final syncStatus = ActivitySyncStatusValue.parse(
+        activities.single['syncStatus']! as String,
+      );
+      if (allowedStatuses != null && !allowedStatuses.contains(syncStatus)) {
         return false;
       }
       final runs = await txn.query(
@@ -496,12 +523,8 @@ WHERE queueId = ? AND ownerNik = ? AND state NOT IN (?, ?)''',
       );
       return await txn.delete(
             'activities',
-            where: 'activityId = ? AND ownerNik = ? AND syncStatus = ?',
-            whereArgs: [
-              activityId,
-              ownerNik,
-              ActivitySyncStatus.notEligible.value,
-            ],
+            where: 'activityId = ? AND ownerNik = ?',
+            whereArgs: [activityId, ownerNik],
           ) ==
           1;
     });
@@ -700,7 +723,29 @@ FROM activities WHERE ownerNik = ?
   }
 
   @override
-  Future<FinalActivity> finalizeRun(RunSession session) async {
+  Future<List<PersistedPointDecision>> pointDecisions(
+    String sessionId,
+    String ownerNik,
+  ) async {
+    final rows = await (await _db).rawQuery(
+      '''SELECT p.sessionId, p.sequence, p.latitude, p.longitude,
+       p.accuracyMeters, p.provider, p.providerMonotonicMillis,
+       p.receivedMonotonicMillis, p.epochMillis, p.isMocked,
+       p.decision, p.rejectReason, p.segmentMeters
+FROM location_points p
+JOIN run_sessions r ON r.sessionId = p.sessionId
+WHERE p.sessionId = ? AND r.ownerNik = ?
+ORDER BY p.sequence ASC''',
+      [sessionId, ownerNik],
+    );
+    return rows.map(PersistedPointDecision.fromMap).toList(growable: false);
+  }
+
+  @override
+  Future<FinalActivity> finalizeRun(
+    RunSession session, {
+    double? finalDistanceMeters,
+  }) async {
     return (await _db).transaction((txn) async {
       final currentRows = await txn.query(
         'run_sessions',
@@ -724,8 +769,15 @@ FROM activities WHERE ownerNik = ?
 FROM location_points WHERE sessionId = ? AND decision = ?''',
         [session.sessionId, LocationDecisionType.accepted.value],
       );
-      final reconciledDistance = (distanceRows.first['distance']! as num)
+      final integratedDistance = (distanceRows.first['distance']! as num)
           .toDouble();
+      final reconciledDistance =
+          finalDistanceMeters != null &&
+              finalDistanceMeters.isFinite &&
+              finalDistanceMeters >= 0 &&
+              finalDistanceMeters <= integratedDistance
+          ? finalDistanceMeters
+          : integratedDistance;
       final activityId = 'run_${session.sessionId}';
       final end = session.endEpochMillis ?? session.updatedAtMillis;
       final activity = FinalActivity(
@@ -976,10 +1028,29 @@ class MemoryActivityStore implements ActivityStore {
 
   @override
   Future<bool> deleteNotEligible(String activityId, String ownerNik) async {
+    return _removeLocalData(
+      activityId,
+      ownerNik,
+      allowedStatuses: const {ActivitySyncStatus.notEligible},
+    );
+  }
+
+  @override
+  Future<bool> removeLocalData(String activityId, String ownerNik) async {
+    return _removeLocalData(activityId, ownerNik);
+  }
+
+  Future<bool> _removeLocalData(
+    String activityId,
+    String ownerNik, {
+    Set<ActivitySyncStatus>? allowedStatuses,
+  }) async {
     final activity = _items[activityId];
-    if (activity == null ||
-        activity.ownerNik != ownerNik ||
-        activity.syncStatus != ActivitySyncStatus.notEligible) {
+    if (activity == null || activity.ownerNik != ownerNik) {
+      return false;
+    }
+    if (allowedStatuses != null &&
+        !allowedStatuses.contains(activity.syncStatus)) {
       return false;
     }
     final runIds = _runs.values
@@ -1114,18 +1185,41 @@ class MemoryActivityStore implements ActivityStore {
   }
 
   @override
-  Future<FinalActivity> finalizeRun(RunSession session) async {
+  Future<List<PersistedPointDecision>> pointDecisions(
+    String sessionId,
+    String ownerNik,
+  ) async {
+    final run = _runs[sessionId];
+    if (run == null || run.ownerNik != ownerNik) return const [];
+    final points = List<PersistedPointDecision>.from(
+      _points[sessionId] ?? const <PersistedPointDecision>[],
+    )..sort((a, b) => a.sample.sequence.compareTo(b.sample.sequence));
+    return List.unmodifiable(points);
+  }
+
+  @override
+  Future<FinalActivity> finalizeRun(
+    RunSession session, {
+    double? finalDistanceMeters,
+  }) async {
     final current = _runs[session.sessionId];
     if (current == null) throw StateError('Run session was not found.');
     if (current.finalActivityId != null) {
       return _items[current.finalActivityId]!;
     }
-    final distance =
+    final integratedDistance =
         (_points[session.sessionId] ?? const <PersistedPointDecision>[])
             .where(
               (item) => item.decision.type == LocationDecisionType.accepted,
             )
             .fold<double>(0, (sum, item) => sum + item.decision.segmentMeters);
+    final distance =
+        finalDistanceMeters != null &&
+            finalDistanceMeters.isFinite &&
+            finalDistanceMeters >= 0 &&
+            finalDistanceMeters <= integratedDistance
+        ? finalDistanceMeters
+        : integratedDistance;
     final activityId = 'run_${session.sessionId}';
     final end = session.endEpochMillis ?? session.updatedAtMillis;
     final activity = FinalActivity(

@@ -98,6 +98,11 @@ class _GuildScreenState extends State<GuildScreen> {
       );
     }
     final guild = data.guild;
+    final currentNik = widget.controller.session.nik;
+    final orderedMembers = <GuildMember>[
+      ...data.members.where((member) => member.nik == currentNik),
+      ...data.members.where((member) => member.nik != currentNik),
+    ];
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
@@ -150,17 +155,33 @@ class _GuildScreenState extends State<GuildScreen> {
             message: 'NO ACTIVE GUILD MEMBERS',
           )
         else
-          for (final member in data.members) ...[
-            OraCard(
+          for (final member in orderedMembers) ...[
+            Container(
+              key: member.nik == currentNik
+                  ? const Key('your_member_card')
+                  : null,
               padding: const EdgeInsets.all(12),
+              decoration: member.nik == currentNik
+                  ? _highlightDecoration()
+                  : _standardGuildCardDecoration(),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
-                  Text(
-                    member.nickname.isEmpty ? member.nik : member.nickname,
-                    style: OraTextStyles.displaySmall.copyWith(
-                      color: OraColors.gold,
-                    ),
+                  Row(
+                    children: [
+                      Expanded(
+                        child: Text(
+                          member.nickname.isEmpty
+                              ? member.nik
+                              : member.nickname,
+                          style: OraTextStyles.displaySmall.copyWith(
+                            color: OraColors.gold,
+                          ),
+                        ),
+                      ),
+                      if (member.nik == currentNik)
+                        const PixelBadge(text: 'YOU'),
+                    ],
                   ),
                   const SizedBox(height: 9),
                   OraStatLine(
@@ -215,6 +236,11 @@ class _GuildScreenState extends State<GuildScreen> {
         ),
         const SizedBox(height: 14),
         if (controller.leaderboardPhase == LoadPhase.loading &&
+            controller.leaderboardData != null) ...[
+          const _LeaderboardLoadingBanner(),
+          const SizedBox(height: 12),
+        ],
+        if (controller.leaderboardPhase == LoadPhase.loading &&
             controller.leaderboardData == null)
           const OraStatusPanel(
             kind: OraPanelKind.loading,
@@ -241,9 +267,9 @@ class _GuildScreenState extends State<GuildScreen> {
           if (controller.leaderboardData!.currentUserRank case final rank?) ...[
             Container(
               key: const Key('your_rank_card'),
-              padding: const EdgeInsets.all(18),
+              padding: const EdgeInsets.all(16),
               decoration: BoxDecoration(
-                color: OraColors.rankBlue.withValues(alpha: 0.1),
+                color: OraColors.rankBlue.withValues(alpha: 0.12),
                 borderRadius: BorderRadius.circular(5),
                 border: Border.all(color: OraColors.rankBlue, width: 2),
               ),
@@ -251,6 +277,19 @@ class _GuildScreenState extends State<GuildScreen> {
                 label: 'YOUR RANK',
                 value: '#${rank.rank} • ${compactNumber(rank.metricValue)}',
                 assetName: 'trophy.png',
+                valueStyle: OraTextStyles.displayLarge.copyWith(
+                  color: OraColors.forestDeep,
+                  fontSize: 24,
+                ),
+                valuePadding: const EdgeInsets.symmetric(
+                  horizontal: 12,
+                  vertical: 9,
+                ),
+                valueDecoration: BoxDecoration(
+                  color: OraColors.gold.withValues(alpha: 0.92),
+                  borderRadius: BorderRadius.circular(4),
+                  border: Border.all(color: OraColors.cream, width: 1.5),
+                ),
               ),
             ),
             const SizedBox(height: 12),
@@ -310,6 +349,18 @@ class _GuildScreenState extends State<GuildScreen> {
         LeaderboardMetric.totalActivities => '${entry.totalActivities} RUNS',
       };
 
+  BoxDecoration _highlightDecoration() => BoxDecoration(
+    color: OraColors.gold.withValues(alpha: 0.24),
+    borderRadius: BorderRadius.circular(5),
+    border: Border.all(color: OraColors.rankBlue, width: 2),
+  );
+
+  BoxDecoration _standardGuildCardDecoration() => BoxDecoration(
+    color: OraColors.panel,
+    borderRadius: BorderRadius.circular(5),
+    border: Border.all(color: OraColors.outline),
+  );
+
   Widget _directory() {
     final controller = widget.controller;
     if (controller.guildPhase == LoadPhase.loading &&
@@ -340,16 +391,9 @@ class _GuildScreenState extends State<GuildScreen> {
               return Container(
                 key: isCurrent ? const Key('your_guild_card') : null,
                 padding: const EdgeInsets.all(14),
-                decoration: BoxDecoration(
-                  color: isCurrent
-                      ? OraColors.gold.withValues(alpha: 0.08)
-                      : OraColors.panel,
-                  borderRadius: BorderRadius.circular(5),
-                  border: Border.all(
-                    color: isCurrent ? OraColors.gold : OraColors.outline,
-                    width: isCurrent ? 2 : 1,
-                  ),
-                ),
+                decoration: isCurrent
+                    ? _highlightDecoration()
+                    : _standardGuildCardDecoration(),
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
@@ -390,4 +434,36 @@ class _GuildScreenState extends State<GuildScreen> {
       ],
     );
   }
+}
+
+class _LeaderboardLoadingBanner extends StatelessWidget {
+  const _LeaderboardLoadingBanner();
+
+  @override
+  Widget build(BuildContext context) => Container(
+    key: const Key('leaderboard_refreshing'),
+    padding: const EdgeInsets.all(12),
+    decoration: BoxDecoration(
+      color: OraColors.panelAlt,
+      borderRadius: BorderRadius.circular(5),
+      border: Border.all(color: OraColors.gold.withValues(alpha: 0.55)),
+    ),
+    child: Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        const LinearProgressIndicator(
+          minHeight: 5,
+          color: OraColors.gold,
+          backgroundColor: OraColors.outline,
+        ),
+        const SizedBox(height: 8),
+        Text(
+          'UPDATING RANKS...',
+          textAlign: TextAlign.center,
+          style: Theme.of(context).textTheme.bodySmall
+              ?.copyWith(color: OraColors.creamMuted),
+        ),
+      ],
+    ),
+  );
 }

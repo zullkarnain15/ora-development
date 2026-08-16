@@ -6,6 +6,7 @@ import '../../../core/network/apps_script_client.dart';
 import '../../activity/application/activity_sync_service.dart';
 import '../../activity/data/activity_store.dart';
 import '../../activity/domain/final_activity.dart';
+import '../../activity/domain/server_activity_summary.dart';
 import '../../auth/domain/auth_models.dart';
 import '../data/ora_feature_api.dart';
 import '../domain/feature_models.dart';
@@ -50,9 +51,11 @@ class FeatureController extends ChangeNotifier {
 
   LoadPhase activityPhase = LoadPhase.idle;
   List<FinalActivity> activities = const [];
+  Set<String> localActivityIds = const {};
   FinalActivity? latestActivity;
   ActivityTotals activityTotals = ActivityTotals.zero;
   String? activityError;
+  String? activityWarning;
   bool isSyncing = false;
   String? syncMessage;
   bool syncError = false;
@@ -232,16 +235,35 @@ class FeatureController extends ChangeNotifier {
     }
     activityPhase = LoadPhase.loading;
     activityError = null;
+    activityWarning = null;
     _safeNotify();
     try {
+      final ownerNik = session.nik;
       final values = await Future.wait<Object?>([
-        activityStore.newestFirst(session.nik),
-        activityStore.latest(session.nik),
-        activityStore.totals(session.nik),
+        activityStore.newestFirst(ownerNik),
+        activityStore.totals(ownerNik),
       ]);
-      activities = values[0]! as List<FinalActivity>;
-      latestActivity = values[1] as FinalActivity?;
-      activityTotals = values[2]! as ActivityTotals;
+      final local = values[0]! as List<FinalActivity>;
+      final localIds = local.map((activity) => activity.activityId).toSet();
+      List<ServerActivitySummary> backend = const [];
+      try {
+        backend = await api.activityHistory(session.sessionToken);
+      } on BackendFailure catch (error) {
+        activityWarning = error.invalidatesSession
+            ? 'SESSION EXPIRED - LOGIN AGAIN'
+            : 'SERVER HISTORY UNAVAILABLE - SHOWING DEVICE LOG';
+      } on Object {
+        activityWarning = 'SERVER HISTORY UNAVAILABLE - SHOWING DEVICE LOG';
+      }
+      if (session.nik != ownerNik) return;
+      activities = mergeActivityHistory(
+        ownerNik: ownerNik,
+        local: local,
+        backend: backend,
+      );
+      localActivityIds = Set.unmodifiable(localIds);
+      latestActivity = activities.isEmpty ? null : activities.first;
+      activityTotals = values[1]! as ActivityTotals;
       activityPhase = LoadPhase.ready;
     } on Object {
       activityPhase = LoadPhase.error;
@@ -300,6 +322,15 @@ class FeatureController extends ChangeNotifier {
     );
     if (deleted) await loadActivities(force: true);
     return deleted;
+  }
+
+  Future<bool> removeLocalActivityData(String activityId) async {
+    final removed = await activityStore.removeLocalData(
+      activityId,
+      session.nik,
+    );
+    if (removed) await loadActivities(force: true);
+    return removed;
   }
 
   String _featureMessage(BackendFailure error, String fallback) {

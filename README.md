@@ -33,3 +33,16 @@ location callbacks; keep ORA visible during a Web run for best accuracy.
 
 Never put PINs, tokens, API secrets, signing material, or other credentials in
 Flutter Web source, build arguments, GitHub Pages, or committed configuration.
+
+## Backend valid-run configuration
+
+`TOTAL_RUNS` counts unique completed activities that meet
+`MIN_DISTANCE_VALID_RUN_KM`. The backend fallback is `1.0` km when this Config
+key is missing, blank, non-numeric, zero, or negative. This setting is separate
+from `MIN_DISTANCE_XP_KM`; changing the XP eligibility threshold does not change
+which activities count toward `TOTAL_RUNS`.
+
+Run `setupValidRunConfig()` once from the bound Apps Script editor to add or
+repair the Config row. It preserves an existing positive value and documents it
+in the sheet as: "Jarak minimum agar satu activity dianggap sebagai valid run
+untuk aturan berbasis jumlah run. Contoh: 1.0 = minimum 1 km."

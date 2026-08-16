@@ -118,10 +118,16 @@ class OraStatLine extends StatelessWidget {
     required this.label,
     required this.value,
     this.assetName,
+    this.valueStyle,
+    this.valuePadding,
+    this.valueDecoration,
   });
   final String label;
   final String value;
   final String? assetName;
+  final TextStyle? valueStyle;
+  final EdgeInsetsGeometry? valuePadding;
+  final Decoration? valueDecoration;
 
   @override
   Widget build(BuildContext context) => Row(
@@ -133,9 +139,15 @@ class OraStatLine extends StatelessWidget {
       Expanded(
         child: Text(label, style: Theme.of(context).textTheme.bodyMedium),
       ),
-      Text(
-        value,
-        style: OraTextStyles.displaySmall.copyWith(color: OraColors.gold),
+      Container(
+        padding: valuePadding,
+        decoration: valueDecoration,
+        child: Text(
+          value,
+          style:
+              valueStyle ??
+              OraTextStyles.displaySmall.copyWith(color: OraColors.gold),
+        ),
       ),
     ],
   );

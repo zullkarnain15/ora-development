@@ -119,7 +119,7 @@ class ActivityRouteViewer extends StatelessWidget {
       if (snapshot.hasError || points.isEmpty) {
         return const SizedBox(
           height: 180,
-          child: Center(child: Text('ROUTE DATA IS NOT AVAILABLE')),
+          child: Center(child: Text('ROUTE DATA NOT AVAILABLE ON THIS DEVICE')),
         );
       }
       return Column(

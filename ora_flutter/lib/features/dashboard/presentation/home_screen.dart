@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import '../../../core/theme/ora_theme.dart';
 import '../../../shared/widgets/ora_widgets.dart';
 import '../../activity/domain/final_activity.dart';
+import '../../activity/presentation/activity_route_viewer.dart';
 import '../application/feature_controller.dart';
 import '../domain/feature_models.dart';
 import 'formatters.dart';
@@ -202,9 +203,38 @@ class HomeScreen extends StatelessWidget {
                 assetName: 'warning.png',
               ),
             ],
+            const SizedBox(height: 12),
+            OutlinedButton.icon(
+              key: const Key('home_view_last_route'),
+              onPressed: () => _showRoute(context, activity),
+              icon: const Icon(Icons.route),
+              label: const Text('VIEW ROUTE'),
+            ),
           ],
         ],
       ),
     );
   }
+
+  Future<void> _showRoute(BuildContext context, FinalActivity activity) =>
+      showDialog<void>(
+        context: context,
+        builder: (context) => AlertDialog(
+          title: const Text('ADVENTURE ROUTE'),
+          content: SizedBox(
+            width: 460,
+            child: ActivityRouteViewer(
+              store: controller.activityStore,
+              activity: activity,
+              ownerNik: controller.session.nik,
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: const Text('CLOSE'),
+            ),
+          ],
+        ),
+      );
 }

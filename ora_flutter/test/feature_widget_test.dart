@@ -62,6 +62,30 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
+  testWidgets('Home last adventure can open unavailable local route', (
+    tester,
+  ) async {
+    final controller = _controller()
+      ..activityPhase = LoadPhase.ready
+      ..latestActivity = _activity('A2', ActivitySyncStatus.synced);
+
+    await tester.pumpWidget(_host(HomeScreen(controller: controller)));
+
+    final button = find.byKey(const Key('home_view_last_route'));
+    expect(button, findsOneWidget);
+    await tester.ensureVisible(button);
+    await tester.pumpAndSettle();
+    await tester.tap(button);
+    await tester.pumpAndSettle();
+
+    expect(find.text('ADVENTURE ROUTE'), findsOneWidget);
+    expect(
+      find.text('ROUTE DATA NOT AVAILABLE ON THIS DEVICE'),
+      findsOneWidget,
+    );
+    expect(tester.takeException(), isNull);
+  });
+
   testWidgets('Quest error content remains retryable with text scaling', (
     tester,
   ) async {
@@ -156,6 +180,80 @@ void main() {
     },
   );
 
+  testWidgets('Profile uses remove local data wording for synced local copy', (
+    tester,
+  ) async {
+    final controller = _controller()
+      ..activityPhase = LoadPhase.ready
+      ..activities = [_activity('A2', ActivitySyncStatus.synced)]
+      ..localActivityIds = {'A2'};
+
+    await tester.pumpWidget(
+      _host(ProfileScreen(controller: controller, onSettings: () {})),
+    );
+
+    final button = find.byKey(const Key('remove_local_data_A2'));
+    expect(button, findsOneWidget);
+    expect(find.text('REMOVE LOCAL DATA'), findsOneWidget);
+
+    await tester.ensureVisible(button);
+    await tester.pumpAndSettle();
+    await tester.tap(button);
+    await tester.pumpAndSettle();
+
+    expect(find.text('REMOVE LOCAL DATA?'), findsOneWidget);
+    expect(
+      find.textContaining('summary will remain in your Adventure Log'),
+      findsOneWidget,
+    );
+    expect(find.text('REMOVE'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('Guild rank shows updating banner while refreshing old data', (
+    tester,
+  ) async {
+    final controller = _controller()
+      ..guildPhase = LoadPhase.ready
+      ..guildData = GuildData(
+        status: 'ACTIVE',
+        guild: _guild('OPS', 'OUR GUILD'),
+        members: const [],
+        directory: const [],
+      )
+      ..leaderboardPhase = LoadPhase.loading
+      ..leaderboardData = const LeaderboardData(
+        scope: LeaderboardScope.global,
+        metric: LeaderboardMetric.totalXp,
+        status: 'ACTIVE',
+        entries: [
+          LeaderboardEntry(
+            rank: 1,
+            nik: '1001',
+            nickname: 'RUNNER',
+            division: 'OPS',
+            totalXp: 100,
+            totalDistanceKm: 10,
+            totalActivities: 2,
+            currentLevel: 2,
+            currentLevelName: 'SCOUT',
+          ),
+        ],
+        currentUserRank: CurrentUserRank(rank: 1, metricValue: 100),
+      );
+
+    await tester.pumpWidget(
+      _host(Material(child: GuildScreen(controller: controller))),
+    );
+    await tester.tap(find.text('RANK'));
+    await tester.pump();
+
+    expect(find.byKey(const Key('leaderboard_refreshing')), findsOneWidget);
+    expect(find.text('UPDATING RANKS...'), findsOneWidget);
+    expect(find.byKey(const Key('your_rank_card')), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+
   testWidgets('current guild is pinned first and your rank uses blue border', (
     tester,
   ) async {
@@ -166,7 +264,7 @@ void main() {
       ..guildData = GuildData(
         status: 'ACTIVE',
         guild: current,
-        members: const [],
+        members: [_member('2002', 'OTHER'), _member('1001', 'RUNNER')],
         directory: [other, current],
       )
       ..leaderboardPhase = LoadPhase.ready
@@ -193,6 +291,18 @@ void main() {
     await tester.pumpWidget(
       _host(Material(child: GuildScreen(controller: controller))),
     );
+    expect(find.byKey(const Key('your_member_card')), findsOneWidget);
+    expect(
+      tester.getTopLeft(find.byKey(const Key('your_member_card'))).dy,
+      lessThan(tester.getTopLeft(find.text('OTHER')).dy),
+    );
+    final memberCard = tester.widget<Container>(
+      find.byKey(const Key('your_member_card')),
+    );
+    final memberDecoration = memberCard.decoration! as BoxDecoration;
+    expect(memberDecoration.color, OraColors.gold.withValues(alpha: 0.24));
+    expect((memberDecoration.border! as Border).top.color, OraColors.rankBlue);
+
     await tester.tap(find.text('GUILDS'));
     await tester.pump();
     expect(find.text('YOUR GUILD'), findsOneWidget);
@@ -200,6 +310,12 @@ void main() {
       tester.getTopLeft(find.byKey(const Key('your_guild_card'))).dy,
       lessThan(tester.getTopLeft(find.text('OTHER GUILD')).dy),
     );
+    final guildCard = tester.widget<Container>(
+      find.byKey(const Key('your_guild_card')),
+    );
+    final guildDecoration = guildCard.decoration! as BoxDecoration;
+    expect(guildDecoration.color, OraColors.gold.withValues(alpha: 0.24));
+    expect((guildDecoration.border! as Border).top.color, OraColors.rankBlue);
 
     await tester.tap(find.text('RANK'));
     await tester.pump();
@@ -208,6 +324,29 @@ void main() {
     );
     final decoration = rankCard.decoration! as BoxDecoration;
     expect((decoration.border! as Border).top.color, OraColors.rankBlue);
+    final rankTexts = tester.widgetList<Text>(
+      find.descendant(
+        of: find.byKey(const Key('your_rank_card')),
+        matching: find.byType(Text),
+      ),
+    );
+    final rankValue = rankTexts.singleWhere(
+      (text) => text.data?.startsWith('#1') == true,
+    );
+    expect(rankValue.style?.fontSize, 24);
+    final rankBadges = tester
+        .widgetList<Container>(
+          find.descendant(
+            of: find.byKey(const Key('your_rank_card')),
+            matching: find.byType(Container),
+          ),
+        )
+        .where((container) {
+          final decoration = container.decoration;
+          return decoration is BoxDecoration &&
+              decoration.color == OraColors.gold.withValues(alpha: 0.92);
+        });
+    expect(rankBadges, isNotEmpty);
   });
 }
 
@@ -223,6 +362,17 @@ GuildSummary _guild(String id, String name) => GuildSummary(
   currentLevelName: 'TEAM',
   displayName: name,
   description: '',
+);
+
+GuildMember _member(String nik, String nickname) => GuildMember(
+  nik: nik,
+  nickname: nickname,
+  division: 'OPS',
+  totalDistanceKm: 10,
+  totalActivities: 2,
+  totalXp: 100,
+  currentLevel: 2,
+  currentLevelName: 'SCOUT',
 );
 
 FinalActivity _activity(String id, ActivitySyncStatus status) => FinalActivity(

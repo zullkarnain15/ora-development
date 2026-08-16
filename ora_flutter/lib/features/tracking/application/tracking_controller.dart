@@ -8,6 +8,10 @@ import '../../activity/domain/final_activity.dart';
 import '../../auth/domain/auth_models.dart';
 import '../data/native_tracking_adapter.dart';
 import '../data/tracking_adapter_factory.dart';
+import '../domain/field_diagnostics.dart';
+import '../domain/final_distance_reconciler.dart';
+import '../domain/gps_soak.dart';
+import '../domain/gps_soak_policy_factory.dart';
 import '../domain/location_engine.dart';
 import '../domain/run_time_engine.dart';
 import '../domain/tracking_models.dart';
@@ -19,15 +23,20 @@ class TrackingController extends ChangeNotifier with WidgetsBindingObserver {
     required this.store,
     TrackingNativeAdapter? nativeAdapter,
     TrackingPolicy? policy,
-    this.gpsSearchTimeout = const Duration(seconds: 20),
+    GpsSoakPolicy? soakPolicy,
+    Duration? gpsSearchTimeout,
     this.onActivitySaved,
   }) : nativeAdapter = nativeAdapter ?? createTrackingAdapter(),
        policy = policy ?? createTrackingPolicy(),
+       soakPolicy = soakPolicy ?? createGpsSoakPolicy(),
+       gpsSearchTimeout =
+           gpsSearchTimeout ??
+           (soakPolicy ?? createGpsSoakPolicy()).maximumSoakDuration,
        _locationEngine = RunLocationEngine(
          policy: policy ?? createTrackingPolicy(),
        ),
-       _preflightEngine = RunLocationEngine(
-         policy: policy ?? createTrackingPolicy(),
+       _gpsSoakEngine = GpsSoakEngine(
+         policy: soakPolicy ?? createGpsSoakPolicy(),
        ) {
     _processClock.start();
   }
@@ -36,10 +45,11 @@ class TrackingController extends ChangeNotifier with WidgetsBindingObserver {
   final ActivityStore store;
   final TrackingNativeAdapter nativeAdapter;
   final TrackingPolicy policy;
+  final GpsSoakPolicy soakPolicy;
   final Duration gpsSearchTimeout;
   final VoidCallback? onActivitySaved;
   final RunLocationEngine _locationEngine;
-  final RunLocationEngine _preflightEngine;
+  final GpsSoakEngine _gpsSoakEngine;
   final Stopwatch _processClock = Stopwatch();
 
   RunSession? session;
@@ -55,6 +65,9 @@ class TrackingController extends ChangeNotifier with WidgetsBindingObserver {
   int? averagePace;
   int gpsSearchRemainingSeconds = 20;
   bool gpsSearchTimedOut = false;
+  GpsSoakResult? gpsSoakResult;
+  ReconciliationResult? finalReconciliation;
+  FieldDiagnosticSummary? fieldDiagnostics;
 
   StreamSubscription<NativeTrackingEvent>? _eventSubscription;
   Timer? _ticker;
@@ -70,6 +83,8 @@ class TrackingController extends ChangeNotifier with WidgetsBindingObserver {
   bool _runVisible = false;
   RawLocationSample? _readySample;
   int? _gpsSearchDeadlineProcessMillis;
+  GpsSoakState? _lastSoakState;
+  int _gpsStatusChanges = 0;
 
   bool get hasActiveSession =>
       session != null &&
@@ -168,7 +183,12 @@ class TrackingController extends ChangeNotifier with WidgetsBindingObserver {
     gpsSearchTimedOut = false;
     _gpsSearchDeadlineProcessMillis = null;
     _readySample = null;
-    _preflightEngine.startNewSession();
+    gpsSoakResult = null;
+    finalReconciliation = null;
+    fieldDiagnostics = null;
+    _lastSoakState = GpsSoakState.searching;
+    _gpsStatusChanges = 1;
+    _gpsSoakEngine.reset();
     _safeNotify();
     try {
       final permissions = await nativeAdapter.requestPermission();
@@ -205,7 +225,7 @@ class TrackingController extends ChangeNotifier with WidgetsBindingObserver {
     } on Object {
       // Preview is best-effort and never owns a run session.
     }
-    _preflightEngine.stop();
+    _gpsSoakEngine.reset();
     _readySample = null;
     _gpsSearchDeadlineProcessMillis = null;
     gpsSearchTimedOut = false;
@@ -421,7 +441,27 @@ class TrackingController extends ChangeNotifier with WidgetsBindingObserver {
           now,
         ),
       );
-      final saved = await store.finalizeRun(finalized);
+      final points = await store.pointDecisions(
+        finalized.sessionId,
+        finalized.ownerNik,
+      );
+      final reconciliation = const FinalDistanceReconciler().reconcile(points);
+      final saved = await store.finalizeRun(
+        finalized,
+        finalDistanceMeters: reconciliation.finalDistanceMeters,
+      );
+      final soak = gpsSoakResult;
+      final summary = FieldDiagnosticSummary.fromDecisions(
+        source: kIsWeb ? 'WEB' : 'ANDROID',
+        decisions: points,
+        soakDurationMillis: soak?.elapsed.inMilliseconds ?? 0,
+        soakSampleCount: soak?.sampleCount ?? 0,
+        gpsStatusChanges: _gpsStatusChanges,
+        finalDistanceMeters: saved.distanceMeters,
+        flags: reconciliation.flags,
+      );
+      finalReconciliation = reconciliation;
+      fieldDiagnostics = summary;
       finalActivity = saved;
       session = finalized.copyWith(
         status: TrackingStatus.finished,
@@ -435,6 +475,7 @@ class TrackingController extends ChangeNotifier with WidgetsBindingObserver {
       message = 'ADVENTURE SAVED OFFLINE';
       isWarning = false;
       _locationEngine.stop();
+      if (kDebugMode) debugPrint('ORA_RUN_SUMMARY\n${summary.formatForLog()}');
       onActivitySaved?.call();
       _safeNotify();
       await _refreshNativeStatusOnly();
@@ -518,6 +559,8 @@ class TrackingController extends ChangeNotifier with WidgetsBindingObserver {
     activeDurationMillis = 0;
     sessionElapsedMillis = 0;
     averagePace = null;
+    finalReconciliation = null;
+    fieldDiagnostics = null;
     message = 'GPS READY';
     isWarning = false;
     _locationEngine.stop();
@@ -533,6 +576,8 @@ class TrackingController extends ChangeNotifier with WidgetsBindingObserver {
     activeDurationMillis = 0;
     sessionElapsedMillis = 0;
     averagePace = null;
+    finalReconciliation = null;
+    fieldDiagnostics = null;
     gpsQuality = GpsQuality.unknown;
     message = 'GPS READY';
     isWarning = false;
@@ -549,10 +594,12 @@ class TrackingController extends ChangeNotifier with WidgetsBindingObserver {
       return;
     }
     if (event.type == 'providerUnavailable') {
+      _gpsStatusChanges += 1;
       _showGpsWarning('ACTIVE DURATION CONTINUES - WAITING FOR GPS');
       return;
     }
     if (event.type == 'error') {
+      _gpsStatusChanges += 1;
       message = _messageForNativeCode(event.code, event.message);
       isWarning = true;
       _safeNotify();
@@ -569,13 +616,11 @@ class TrackingController extends ChangeNotifier with WidgetsBindingObserver {
         (status == TrackingStatus.preparingGps ||
             status == TrackingStatus.gpsReady)) {
       gpsQuality = point.quality(policy);
-      // Readiness follows the latest fix, not movement between preview fixes.
-      _preflightEngine.startNewSession();
-      final decision = _preflightEngine.process(point);
-      if (decision.type == LocationDecisionType.baseline ||
-          decision.type == LocationDecisionType.reentryBaseline ||
-          decision.type == LocationDecisionType.accepted) {
-        _readySample = point;
+      final soak = _gpsSoakEngine.add(point);
+      _recordSoakState(soak.state);
+      gpsSoakResult = soak;
+      if (soak.state == GpsSoakState.ready) {
+        _readySample = soak.latestSample;
         status = TrackingStatus.gpsReady;
         message = 'GPS READY - YOU CAN START';
         isWarning = false;
@@ -586,7 +631,10 @@ class TrackingController extends ChangeNotifier with WidgetsBindingObserver {
         _readySample = null;
         status = TrackingStatus.preparingGps;
         if (!gpsSearchTimedOut) {
-          _applyRejectionMessage(decision.reason);
+          message = soak.validSampleCount == 0
+              ? 'SEARCHING GPS - MOVE TO AN OPEN AREA'
+              : 'STABILIZING GPS - HOLD POSITION BRIEFLY';
+          isWarning = false;
         }
       }
       _safeNotify();
@@ -660,8 +708,23 @@ class TrackingController extends ChangeNotifier with WidgetsBindingObserver {
       if (remainingMillis <= 0) {
         gpsSearchRemainingSeconds = 0;
         gpsSearchTimedOut = true;
-        message = 'GPS SIGNAL IS STILL WEAK - CHOOSE HOW TO CONTINUE';
-        isWarning = true;
+        final now = _nativeClockAnchor == null
+            ? null
+            : _estimatedSnapshot().monotonicMillis;
+        final soak = _gpsSoakEngine.timeout(now ?? 0);
+        _recordSoakState(soak.state);
+        gpsSoakResult = soak;
+        if (soak.state == GpsSoakState.degradedReady &&
+            soak.latestSample != null) {
+          _readySample = soak.latestSample;
+          status = TrackingStatus.gpsReady;
+          message = 'GPS READY WITH LIMITED ACCURACY - START IN OPEN AREA';
+          isWarning = true;
+          _gpsSearchDeadlineProcessMillis = null;
+        } else {
+          message = 'GPS SIGNAL IS STILL WEAK - CHOOSE HOW TO CONTINUE';
+          isWarning = true;
+        }
       } else {
         gpsSearchRemainingSeconds = (remainingMillis / 1000).ceil();
       }
@@ -710,6 +773,12 @@ class TrackingController extends ChangeNotifier with WidgetsBindingObserver {
       );
     }
     _safeNotify();
+  }
+
+  void _recordSoakState(GpsSoakState state) {
+    if (_lastSoakState == state) return;
+    _lastSoakState = state;
+    _gpsStatusChanges += 1;
   }
 
   Future<void> _refreshNativeState() async {

@@ -5,6 +5,7 @@ import 'package:ora_flutter/core/network/apps_script_client.dart';
 import 'package:ora_flutter/features/activity/data/activity_store.dart';
 import 'package:ora_flutter/features/activity/domain/final_activity.dart';
 import 'package:ora_flutter/features/activity/domain/activity_sync.dart';
+import 'package:ora_flutter/features/activity/domain/server_activity_summary.dart';
 import 'package:ora_flutter/features/auth/domain/auth_models.dart';
 import 'package:ora_flutter/features/dashboard/application/feature_controller.dart';
 import 'package:ora_flutter/features/dashboard/data/ora_feature_api.dart';
@@ -58,6 +59,8 @@ class _FakeFeatureApi implements OraFeatureApi {
   BackendFailure? submitFailure;
   Completer<String>? submitCompleter;
   final submittedPayloads = <ActivityUploadPayload>[];
+  List<ServerActivitySummary> backendActivities = const [];
+  BackendFailure? activityHistoryFailure;
 
   @override
   Future<Map<String, Object?>> health() async => const {};
@@ -108,6 +111,16 @@ class _FakeFeatureApi implements OraFeatureApi {
     if (submitFailure case final error?) throw error;
     return submitCompleter?.future ?? submitStatus;
   }
+
+  @override
+  Future<List<ServerActivitySummary>> activityHistory(
+    String sessionToken, {
+    int limit = 50,
+    int offset = 0,
+  }) async {
+    if (activityHistoryFailure case final error?) throw error;
+    return backendActivities;
+  }
 }
 
 final _session = UserSession(
@@ -151,7 +164,191 @@ FeatureController _controller(_FakeFeatureApi api) => FeatureController(
   activityStore: MemoryActivityStore(),
 );
 
+FinalActivity _localActivity(
+  String id, {
+  required int start,
+  ActivitySyncStatus syncStatus = ActivitySyncStatus.pending,
+}) => FinalActivity(
+  activityId: id,
+  ownerNik: _session.nik,
+  nicknameSnapshot: 'LOCAL RUNNER',
+  divisionGuildSnapshot: 'LOCAL OPS',
+  startDateTimeMillis: start,
+  endDateTimeMillis: start + 1000,
+  distanceMeters: 1200,
+  activeDurationMillis: 360000,
+  averagePaceSecondsPerKm: 300,
+  createdAtMillis: start + 1000,
+  syncStatus: syncStatus,
+);
+
+ServerActivitySummary _backendActivity(String id, {required int start}) =>
+    ServerActivitySummary(
+      activityId: id,
+      startTime: DateTime.fromMillisecondsSinceEpoch(start, isUtc: true),
+      endTime: DateTime.fromMillisecondsSinceEpoch(start + 1000, isUtc: true),
+      durationSec: 360,
+      distanceKm: 1.2,
+      averagePaceSecondsPerKm: 300,
+      status: 'COMPLETED',
+      source: 'ANDROID',
+      syncedAt: DateTime.fromMillisecondsSinceEpoch(start + 2000, isUtc: true),
+    );
+
 void main() {
+  test('backend-only activity appears when local store is empty', () async {
+    final api = _FakeFeatureApi()
+      ..backendActivities = [_backendActivity('SERVER-1', start: 1000)];
+    final controller = _controller(api);
+
+    await controller.loadActivities();
+
+    expect(controller.activities.single.activityId, 'SERVER-1');
+    expect(controller.latestActivity?.activityId, 'SERVER-1');
+    expect(controller.activities.single.syncStatus, ActivitySyncStatus.synced);
+  });
+
+  test('local-only pending activity remains visible', () async {
+    final api = _FakeFeatureApi();
+    final store = MemoryActivityStore();
+    await store.insert(_localActivity('LOCAL-1', start: 1000));
+    final controller = FeatureController(
+      session: _session,
+      api: api,
+      activityStore: store,
+    );
+
+    await controller.loadActivities();
+
+    expect(controller.activities.single.activityId, 'LOCAL-1');
+    expect(controller.activities.single.syncStatus, ActivitySyncStatus.pending);
+  });
+
+  test(
+    'matching backend and local ActivityId is shown once with local data',
+    () async {
+      final api = _FakeFeatureApi()
+        ..backendActivities = [_backendActivity('SAME', start: 1000)];
+      final store = MemoryActivityStore();
+      await store.insert(_localActivity('SAME', start: 1000));
+      final controller = FeatureController(
+        session: _session,
+        api: api,
+        activityStore: store,
+      );
+
+      await controller.loadActivities();
+
+      expect(controller.activities, hasLength(1));
+      expect(controller.activities.single.nicknameSnapshot, 'LOCAL RUNNER');
+      expect(
+        controller.activities.single.syncStatus,
+        ActivitySyncStatus.synced,
+      );
+    },
+  );
+
+  test(
+    'remove synced local data falls back to backend summary without resync',
+    () async {
+      final api = _FakeFeatureApi()
+        ..backendActivities = [_backendActivity('SAME', start: 1000)];
+      final store = MemoryActivityStore();
+      await store.insert(_localActivity('SAME', start: 1000));
+      final controller = FeatureController(
+        session: _session,
+        api: api,
+        activityStore: store,
+      );
+
+      await controller.loadActivities();
+      expect(controller.activities, hasLength(1));
+      expect(controller.localActivityIds, contains('SAME'));
+      expect(controller.activities.single.nicknameSnapshot, 'LOCAL RUNNER');
+
+      expect(await controller.removeLocalActivityData('SAME'), isTrue);
+
+      expect(controller.activities, hasLength(1));
+      final summary = controller.activities.single;
+      expect(summary.activityId, 'SAME');
+      expect(summary.syncStatus, ActivitySyncStatus.synced);
+      expect(summary.nicknameSnapshot, isNull);
+      expect(summary.distanceMeters, 1200);
+      expect(summary.activeDurationMillis, 360000);
+      expect(summary.averagePaceSecondsPerKm, 300);
+      expect(controller.localActivityIds, isNot(contains('SAME')));
+      expect(await store.newestFirst(_session.nik), isEmpty);
+      expect(await store.dueSync(_session.nik, 999999, force: true), isEmpty);
+      expect(api.submitCalls, 0);
+    },
+  );
+
+  test('newer local pending activity becomes Last Adventure', () async {
+    final api = _FakeFeatureApi()
+      ..backendActivities = [_backendActivity('SERVER-OLD', start: 1000)];
+    final store = MemoryActivityStore();
+    await store.insert(_localActivity('LOCAL-NEW', start: 5000));
+    final controller = FeatureController(
+      session: _session,
+      api: api,
+      activityStore: store,
+    );
+
+    await controller.loadActivities();
+
+    expect(controller.latestActivity?.activityId, 'LOCAL-NEW');
+  });
+
+  test('newer backend activity becomes Last Adventure', () async {
+    final api = _FakeFeatureApi()
+      ..backendActivities = [_backendActivity('SERVER-NEW', start: 5000)];
+    final store = MemoryActivityStore();
+    await store.insert(_localActivity('LOCAL-OLD', start: 1000));
+    final controller = FeatureController(
+      session: _session,
+      api: api,
+      activityStore: store,
+    );
+
+    await controller.loadActivities();
+
+    expect(controller.latestActivity?.activityId, 'SERVER-NEW');
+  });
+
+  test('backend-only summary preserves distance duration and pace', () async {
+    final api = _FakeFeatureApi()
+      ..backendActivities = [_backendActivity('SUMMARY', start: 1000)];
+    final controller = _controller(api);
+
+    await controller.loadActivities();
+
+    final activity = controller.activities.single;
+    expect(activity.distanceMeters, 1200);
+    expect(activity.activeDurationMillis, 360000);
+    expect(activity.averagePaceSecondsPerKm, 300);
+  });
+
+  test('backend unavailable falls back to local activities', () async {
+    final api = _FakeFeatureApi()
+      ..activityHistoryFailure = const BackendFailure(
+        BackendFailureKind.connection,
+        'offline',
+      );
+    final store = MemoryActivityStore();
+    await store.insert(_localActivity('OFFLINE', start: 1000));
+    final controller = FeatureController(
+      session: _session,
+      api: api,
+      activityStore: store,
+    );
+
+    await controller.loadActivities();
+
+    expect(controller.activityPhase, LoadPhase.ready);
+    expect(controller.activities.single.activityId, 'OFFLINE');
+    expect(controller.activityWarning, contains('DEVICE LOG'));
+  });
+
   test(
     'durable sync retries the identical payload and ACKs duplicate',
     () async {

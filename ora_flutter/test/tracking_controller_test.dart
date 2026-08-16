@@ -80,20 +80,23 @@ Future<void> _prepareReady(
   _FakeNativeAdapter native,
 ) async {
   await tracking.prepareGps();
-  native.controller.add(
-    const NativeTrackingEvent(
-      type: 'location',
-      sample: RawLocationSample(
-        latitude: -6.2,
-        longitude: 106.8,
-        accuracyMeters: 5,
-        providerMonotonicMillis: 1000,
-        receivedMonotonicMillis: 1000,
-        epochMillis: 101000,
-        sequence: 1,
+  for (var index = 0; index < 3; index += 1) {
+    final millis = 1000 + (index * 1500);
+    native.controller.add(
+      NativeTrackingEvent(
+        type: 'location',
+        sample: RawLocationSample(
+          latitude: -6.2,
+          longitude: 106.8 + (index * .000001),
+          accuracyMeters: 5,
+          providerMonotonicMillis: millis,
+          receivedMonotonicMillis: millis,
+          epochMillis: 100000 + millis,
+          sequence: index + 1,
+        ),
       ),
-    ),
-  );
+    );
+  }
   await Future<void>.delayed(const Duration(milliseconds: 50));
   expect(tracking.status, TrackingStatus.gpsReady);
 }
@@ -204,6 +207,60 @@ void main() {
       await Future.wait([pause, finish]);
       expect(tracking.status, TrackingStatus.finished);
       expect(native.serviceActive, isFalse);
+      expect(tracking.finalReconciliation, isNotNull);
+      expect(tracking.fieldDiagnostics?.source, 'ANDROID');
+      tracking.dispose();
+      await native.close();
+    },
+  );
+
+  test(
+    'soak points add no distance and Start requires a fresh anchor',
+    () async {
+      final native = _FakeNativeAdapter();
+      final tracking = TrackingController(
+        user: _user,
+        store: MemoryActivityStore(),
+        nativeAdapter: native,
+      );
+      await tracking.initialize();
+      await _prepareReady(tracking, native);
+      expect(tracking.distanceMeters, 0);
+      await tracking.start();
+
+      native.controller.add(
+        const NativeTrackingEvent(
+          type: 'location',
+          sample: RawLocationSample(
+            latitude: -6.2,
+            longitude: 106.81,
+            accuracyMeters: 5,
+            providerMonotonicMillis: 5000,
+            receivedMonotonicMillis: 5000,
+            epochMillis: 105000,
+            sequence: 10,
+          ),
+        ),
+      );
+      await Future<void>.delayed(const Duration(milliseconds: 30));
+      expect(tracking.distanceMeters, 0);
+
+      native.controller.add(
+        const NativeTrackingEvent(
+          type: 'location',
+          sample: RawLocationSample(
+            latitude: -6.2,
+            longitude: 106.81005,
+            accuracyMeters: 5,
+            providerMonotonicMillis: 6000,
+            receivedMonotonicMillis: 6000,
+            epochMillis: 106000,
+            sequence: 11,
+          ),
+        ),
+      );
+      await Future<void>.delayed(const Duration(milliseconds: 30));
+      expect(tracking.distanceMeters, greaterThan(0));
       tracking.dispose();
       await native.close();
     },

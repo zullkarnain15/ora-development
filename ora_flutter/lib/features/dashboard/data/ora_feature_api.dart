@@ -1,5 +1,6 @@
 import '../../../core/network/apps_script_client.dart';
 import '../../activity/domain/activity_sync.dart';
+import '../../activity/domain/server_activity_summary.dart';
 import '../domain/feature_models.dart';
 
 abstract interface class OraFeatureApi {
@@ -20,6 +21,11 @@ abstract interface class OraFeatureApi {
     String sessionToken,
     ActivityUploadPayload payload,
   );
+  Future<List<ServerActivitySummary>> activityHistory(
+    String sessionToken, {
+    int limit = 50,
+    int offset = 0,
+  });
 }
 
 class AppsScriptFeatureApi implements OraFeatureApi {
@@ -173,6 +179,25 @@ class AppsScriptFeatureApi implements OraFeatureApi {
       return _invalid('Activity status is invalid.');
     }
     return status;
+  }
+
+  @override
+  Future<List<ServerActivitySummary>> activityHistory(
+    String sessionToken, {
+    int limit = 50,
+    int offset = 0,
+  }) async {
+    final data = await client.call('getActivityHistory', {
+      'sessionToken': sessionToken,
+      'limit': limit,
+      'offset': offset,
+    });
+    return _parse(
+      () => data
+          .objects('activities')
+          .map(ServerActivitySummary.fromJson)
+          .toList(growable: false),
+    );
   }
 
   T _parse<T>(T Function() parser) {

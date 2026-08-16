@@ -226,6 +226,23 @@ class WebActivityStore implements ActivityStore {
 
   @override
   Future<bool> deleteNotEligible(String activityId, String ownerNik) async {
+    return _removeLocalData(
+      activityId,
+      ownerNik,
+      allowedStatuses: const {ActivitySyncStatus.notEligible},
+    );
+  }
+
+  @override
+  Future<bool> removeLocalData(String activityId, String ownerNik) async {
+    return _removeLocalData(activityId, ownerNik);
+  }
+
+  Future<bool> _removeLocalData(
+    String activityId,
+    String ownerNik, {
+    Set<ActivitySyncStatus>? allowedStatuses,
+  }) async {
     final db = await _db;
     final transaction = db.transactionList(const [
       _activities,
@@ -236,9 +253,14 @@ class WebActivityStore implements ActivityStore {
     ], idbModeReadWrite);
     final activities = transaction.objectStore(_activities);
     final activity = _mapOrNull(await activities.getObject(activityId));
-    if (activity == null ||
-        activity['ownerNik'] != ownerNik ||
-        activity['syncStatus'] != ActivitySyncStatus.notEligible.value) {
+    if (activity == null || activity['ownerNik'] != ownerNik) {
+      await transaction.completed;
+      return false;
+    }
+    final syncStatus = ActivitySyncStatusValue.parse(
+      activity['syncStatus']! as String,
+    );
+    if (allowedStatuses != null && !allowedStatuses.contains(syncStatus)) {
       await transaction.completed;
       return false;
     }
@@ -409,7 +431,30 @@ class WebActivityStore implements ActivityStore {
   }
 
   @override
-  Future<FinalActivity> finalizeRun(RunSession session) async {
+  Future<List<PersistedPointDecision>> pointDecisions(
+    String sessionId,
+    String ownerNik,
+  ) async {
+    final runs = (await _db).transaction(_runSessions, idbModeReadOnly);
+    final run = _mapOrNull(
+      await runs.objectStore(_runSessions).getObject(sessionId),
+    );
+    await runs.completed;
+    if (run == null || run['ownerNik'] != ownerNik) return const [];
+    final rows =
+        (await _all(_locationPoints))
+            .where((row) => row['sessionId'] == sessionId)
+            .map(PersistedPointDecision.fromMap)
+            .toList()
+          ..sort((a, b) => a.sample.sequence.compareTo(b.sample.sequence));
+    return List.unmodifiable(rows);
+  }
+
+  @override
+  Future<FinalActivity> finalizeRun(
+    RunSession session, {
+    double? finalDistanceMeters,
+  }) async {
     final db = await _db;
     final transaction = db.transactionList(const [
       _runSessions,
@@ -434,7 +479,7 @@ class WebActivityStore implements ActivityStore {
 
     final pointRows = (await transaction.objectStore(_locationPoints).getAll())
         .map(_map);
-    final reconciledDistance = pointRows
+    final integratedDistance = pointRows
         .where(
           (row) =>
               row['sessionId'] == session.sessionId &&
@@ -444,6 +489,13 @@ class WebActivityStore implements ActivityStore {
           0,
           (sum, row) => sum + ((row['segmentMeters'] as num?)?.toDouble() ?? 0),
         );
+    final reconciledDistance =
+        finalDistanceMeters != null &&
+            finalDistanceMeters.isFinite &&
+            finalDistanceMeters >= 0 &&
+            finalDistanceMeters <= integratedDistance
+        ? finalDistanceMeters
+        : integratedDistance;
     final activityId = 'run_${session.sessionId}';
     final end = session.endEpochMillis ?? session.updatedAtMillis;
     final activity = FinalActivity(

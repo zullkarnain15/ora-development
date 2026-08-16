@@ -25,6 +25,15 @@ const ORA_SESSION_CACHE_TTL_SECONDS = 21600; // Apps Script cache maximum: 6 hou
 const ORA_SESSION_PROPERTY_PREFIX = 'ora_session_';
 const ORA_SPREADSHEET_ID_PROPERTY = 'ORA_SPREADSHEET_ID';
 
+const ORA_CONFIG_DEFINITIONS = Object.freeze({
+  MIN_DISTANCE_VALID_RUN_KM: Object.freeze({
+    key: 'MIN_DISTANCE_VALID_RUN_KM',
+    defaultValue: 1.0,
+    dataType: 'NUMBER',
+    description: 'Jarak minimum agar satu activity dianggap sebagai valid run untuk aturan berbasis jumlah run. Contoh: 1.0 = minimum 1 km. Berbeda dari MIN_DISTANCE_XP_KM.',
+  }),
+});
+
 const ORA_SHEETS = Object.freeze({
   PARTICIPANTS: 'Participants',
   CONFIG: 'Config',
@@ -158,6 +167,7 @@ function doGet(e) {
  * {"action":"activateNickname","sessionToken":"...","nickname":"ZULRUN15"}
  * {"action":"updateNickname","sessionToken":"...","nickname":"NEWRUN1"}
  * {"action":"submitActivity","sessionToken":"...","activity":{"activityId":"..."}}
+ * {"action":"getActivityHistory","sessionToken":"...","limit":50,"offset":0}
  * {"action":"getGuildSummary","sessionToken":"..."}
  * {"action":"getGuildDirectory","sessionToken":"..."}
  * {"action":"getLeaderboard","sessionToken":"...","scope":"GLOBAL","metric":"TOTAL_XP"}
@@ -178,6 +188,8 @@ function doPost(e) {
         return handleUpdateNickname_(request);
       case 'submitactivity':
         return handleSubmitActivity_(request);
+      case 'getactivityhistory':
+        return handleGetActivityHistory_(request);
       case 'getuserstats':
         return handleGetUserStats_(request);
       case 'getguildsummary':
@@ -469,6 +481,114 @@ function handleSubmitActivity_(request) {
   }
 }
 
+function handleGetActivityHistory_(request) {
+  const session = requireSession_(request.sessionToken);
+  const participant = findParticipantByNik_(session.nik);
+
+  if (!participant) {
+    return jsonError_('PARTICIPANT_NOT_FOUND', 'Participant tidak ditemukan.');
+  }
+  if (participant.status !== 'ACTIVE') {
+    return jsonError_('ACCOUNT_INACTIVE', 'Akun ORA tidak aktif. Hubungi admin.');
+  }
+
+  const limit = clampInteger_(request.limit, 50, 1, 100);
+  const offset = clampInteger_(request.offset, 0, 0, 10000);
+  const allActivities = mapActivityHistoryRowsForNik_(
+    readSheetObjects_(ORA_SHEETS.ACTIVITIES),
+    session.nik
+  );
+  const activities = allActivities.slice(offset, offset + limit);
+
+  return jsonSuccess_({
+    activities: activities,
+    limit: limit,
+    offset: offset,
+    total: allActivities.length,
+    hasMore: offset + activities.length < allActivities.length,
+  });
+}
+
+function mapActivityHistoryRowsForNik_(rows, nik) {
+  const targetNik = normalizeDigits_(nik);
+  const byActivityId = Object.create(null);
+
+  rows.forEach(function (row) {
+    if (normalizeDigits_(row.NIK) !== targetNik) return;
+    if (normalizeQuestType_(row.Status) !== 'COMPLETED') return;
+
+    const activityId = String(row.ActivityId || '').trim();
+    const startTime = toDateOrNull_(row.StartTime);
+    const endTime = toDateOrNull_(row.EndTime);
+    const syncedAt = toDateOrNull_(row.SyncedAt);
+    const activityTime = endTime || startTime;
+    if (!activityId || !startTime || !endTime || !activityTime) return;
+
+    const item = {
+      activityId: activityId,
+      startTime: startTime.toISOString(),
+      endTime: endTime.toISOString(),
+      durationSec: toNonNegativeFiniteNumber_(row.DurationSec),
+      distanceKm: toNonNegativeFiniteNumber_(row.DistanceKm),
+      avgPace: String(row.AvgPace || '').trim(),
+      status: 'COMPLETED',
+      source: String(row.Source || '').trim(),
+      syncedAt: syncedAt ? syncedAt.toISOString() : null,
+      activityTimeMillis: activityTime.getTime(),
+    };
+    const existing = byActivityId[activityId];
+    if (!existing || item.activityTimeMillis > existing.activityTimeMillis) {
+      byActivityId[activityId] = item;
+    }
+  });
+
+  return Object.keys(byActivityId).map(function (activityId) {
+    return byActivityId[activityId];
+  }).sort(function (a, b) {
+    if (b.activityTimeMillis !== a.activityTimeMillis) {
+      return b.activityTimeMillis - a.activityTimeMillis;
+    }
+    return b.activityId.localeCompare(a.activityId);
+  }).map(function (activity) {
+    delete activity.activityTimeMillis;
+    return activity;
+  });
+}
+
+function clampInteger_(value, fallback, minimum, maximum) {
+  const number = Number(value);
+  if (!Number.isFinite(number)) return fallback;
+  return Math.min(maximum, Math.max(minimum, Math.floor(number)));
+}
+
+function testActivityHistoryOwnerIsolation() {
+  const rows = [
+    {
+      ActivityId: 'A-OLD', NIK: '1001', StartTime: '2026-08-14T00:00:00Z',
+      EndTime: '2026-08-14T00:30:00Z', DurationSec: 1800, DistanceKm: 5,
+      AvgPace: '06:00', Status: 'COMPLETED', Source: 'ANDROID',
+      SyncedAt: '2026-08-14T00:31:00Z',
+    },
+    {
+      ActivityId: 'B-SECRET', NIK: '2002', StartTime: '2026-08-16T00:00:00Z',
+      EndTime: '2026-08-16T00:30:00Z', DurationSec: 1800, DistanceKm: 5,
+      AvgPace: '06:00', Status: 'COMPLETED', Source: 'ANDROID',
+      SyncedAt: '2026-08-16T00:31:00Z',
+    },
+    {
+      ActivityId: 'A-PENDING', NIK: '1001', StartTime: '2026-08-15T00:00:00Z',
+      EndTime: '2026-08-15T00:30:00Z', DurationSec: 1800, DistanceKm: 5,
+      AvgPace: '06:00', Status: 'PENDING', Source: 'ANDROID',
+      SyncedAt: '2026-08-15T00:31:00Z',
+    },
+  ];
+  const result = mapActivityHistoryRowsForNik_(rows, '1001');
+  assertBackendTest_(result.length === 1, 'History harus hanya memuat activity resmi owner.');
+  assertBackendTest_(result[0].activityId === 'A-OLD', 'Activity participant lain terekspos.');
+  assertBackendTest_(!Object.prototype.hasOwnProperty.call(result[0], 'NIK'), 'NIK tidak boleh diekspos.');
+  return { ok: true, ownerIsolation: true, completedOnly: true };
+}
+
 function handleGetUserStats_(request) {
   const session = requireSession_(request.sessionToken);
   const participant = findParticipantByNik_(session.nik);
@@ -602,8 +722,15 @@ function handleGetQuestProgress_(request) {
   const guildContext = buildGuildActivityContext_(participant, participantRows, activityRows);
   const userStats = getUserStatsByNik_(participant.nik);
   const claimsByQuestId = getClaimedQuestsByNik_(participant.nik);
+  const questConfig = getActiveConfig_();
   const quests = getActiveQuests_().map(function (quest) {
-    const progress = calculateQuestProgress_(quest, activities, userStats, guildContext);
+    const progress = calculateQuestProgress_(
+      quest,
+      activities,
+      userStats,
+      guildContext,
+      questConfig
+    );
     return attachQuestClaim_(progress, claimsByQuestId[quest.questId] || null);
   });
 
@@ -659,7 +786,13 @@ function handleClaimQuestReward_(request) {
 
     const activities = getCompletedActivitiesForNik_(participant.nik);
     const userStats = getUserStatsByNik_(participant.nik);
-    const progress = calculateQuestProgress_(quest, activities, userStats);
+    const progress = calculateQuestProgress_(
+      quest,
+      activities,
+      userStats,
+      null,
+      getActiveConfig_()
+    );
     if (progress.status === 'UNSUPPORTED_GROUP_SCOPE') {
       return jsonError_(
         'QUEST_GROUP_SCOPE_UNSUPPORTED',
@@ -825,7 +958,7 @@ function buildGuildActivityContext_(owner, participants, activityRows) {
   };
 }
 
-function calculateQuestProgress_(quest, allActivities, userStats, guildContext) {
+function calculateQuestProgress_(quest, allActivities, userStats, guildContext, config) {
   const normalizedType = normalizeQuestType_(quest.questType);
   const supportedType = mapQuestType_(normalizedType);
   const sourceActivities = supportedType === 'GUILD_DISTANCE'
@@ -844,6 +977,9 @@ function calculateQuestProgress_(quest, allActivities, userStats, guildContext) 
       break;
     case 'RUN_COUNT':
       progress = activities.length;
+      break;
+    case 'TOTAL_RUNS':
+      progress = countUniqueValidRuns_(activities, getMinDistanceValidRunKm_(config));
       break;
     case 'RUN_DAYS':
       progress = countUniqueActivityDays_(activities);
@@ -891,6 +1027,34 @@ function calculateQuestProgress_(quest, allActivities, userStats, guildContext) 
 
   const result = publicQuestProgress_(quest, progress, status, completed, progressPercent);
   return supportedType === 'GUILD_DISTANCE' ? blockGuildQuestClaim_(result) : result;
+}
+
+function getMinDistanceValidRunKm_(config) {
+  const definition = ORA_CONFIG_DEFINITIONS.MIN_DISTANCE_VALID_RUN_KM;
+  const activeConfig = config || getActiveConfig_();
+  const configured = Number(activeConfig[definition.key]);
+  return Number.isFinite(configured) && configured > 0
+    ? configured
+    : definition.defaultValue;
+}
+
+function countUniqueValidRuns_(activities, minimumDistanceKm) {
+  const seenActivityIds = Object.create(null);
+  let count = 0;
+
+  activities.forEach(function (activity) {
+    const distanceKm = Number(activity.distanceKm);
+    if (!Number.isFinite(distanceKm) || distanceKm < minimumDistanceKm) return;
+
+    const activityId = String(activity.activityId || '').trim();
+    if (activityId) {
+      if (seenActivityIds[activityId]) return;
+      seenActivityIds[activityId] = true;
+    }
+    count += 1;
+  });
+
+  return count;
 }
 
 function blockGuildQuestClaim_(questProgress) {
@@ -962,7 +1126,7 @@ function mapQuestType_(type) {
     COUNT: 'RUN_COUNT',
     ACTIVITIES: 'RUN_COUNT',
     ACTIVITY_COUNT: 'RUN_COUNT',
-    TOTAL_RUNS: 'RUN_COUNT',
+    TOTAL_RUNS: 'TOTAL_RUNS',
     RUN_DAYS: 'RUN_DAYS',
     ACTIVE_DAYS: 'RUN_DAYS',
     SINGLE_RUN: 'SINGLE_RUN',
@@ -2267,6 +2431,49 @@ function setupBackend1() {
   return summary;
 }
 
+/**
+ * Run once as an admin to add the valid-run threshold to the Config sheet.
+ * Existing positive values are preserved; blank/invalid values are reset to 1.0.
+ */
+function setupValidRunConfig() {
+  const definition = ORA_CONFIG_DEFINITIONS.MIN_DISTANCE_VALID_RUN_KM;
+  const sheet = getValidatedSheet_(ORA_SHEETS.CONFIG);
+  const values = sheet.getDataRange().getValues();
+  const headerMap = createHeaderMap_(values[0]);
+  let rowNumber = null;
+
+  for (let index = 1; index < values.length; index += 1) {
+    if (normalizeQuestType_(values[index][headerMap.Config_Key]) === definition.key) {
+      rowNumber = index + 1;
+      break;
+    }
+  }
+
+  let value = definition.defaultValue;
+  if (rowNumber !== null) {
+    const existing = Number(values[rowNumber - 1][headerMap.Config_Value]);
+    if (Number.isFinite(existing) && existing > 0) value = existing;
+  } else {
+    rowNumber = sheet.getLastRow() + 1;
+  }
+
+  const row = new Array(ORA_HEADERS.Config.length).fill('');
+  row[headerMap.Config_Key] = definition.key;
+  row[headerMap.Config_Value] = value;
+  row[headerMap.Data_Type] = definition.dataType;
+  row[headerMap.Description] = definition.description;
+  row[headerMap.Active] = true;
+  sheet.getRange(rowNumber, 1, 1, row.length).setValues([row]);
+
+  return {
+    ok: true,
+    key: definition.key,
+    value: value,
+    fallback: definition.defaultValue,
+    rowNumber: rowNumber,
+  };
+}
+
 /** Read-only recheck that can be run again at any time. */
 function testBackend1Setup() {
   return setupBackend1();
@@ -3182,12 +3389,16 @@ function testQuestProgressTypeMappings() {
   const totalRuns = calculateQuestProgress_(
     Object.assign({}, baseQuest, { questType: 'TOTAL_RUNS', targetValue: 3 }),
     activities,
-    null
+    null,
+    null,
+    { MIN_DISTANCE_VALID_RUN_KM: 1.0 }
   );
   assertBackendTest_(
     totalRuns.progress === 3 && totalRuns.completed === true,
-    'TOTAL_RUNS harus dihitung seperti RUN_COUNT.'
+    'TOTAL_RUNS harus menghitung activity unik yang mencapai jarak valid.'
   );
+
+  const totalRunsEligibility = testTotalRunsEligibility();
 
   const runDays = calculateQuestProgress_(
     Object.assign({}, baseQuest, { questType: 'RUN_DAYS', targetValue: 3 }),
@@ -3274,6 +3485,7 @@ function testQuestProgressTypeMappings() {
     ok: true,
     distanceRegression: true,
     totalRuns: true,
+    totalRunsEligibility: totalRunsEligibility,
     uniqueRunDays: true,
     singleRunMaximum: true,
     guildDistanceRealProgress: true,
@@ -3285,6 +3497,172 @@ function testQuestProgressTypeMappings() {
     unknownTypeSafe: true,
     ownerIsolation: true,
     periodFiltering: true,
+  };
+}
+
+function testTotalRunsEligibility() {
+  const ownerNik = 'VALID-RUN-OWNER';
+  const otherNik = 'VALID-RUN-OTHER';
+  const validRunConfig = {
+    MIN_DISTANCE_VALID_RUN_KM: 1.0,
+    MIN_DISTANCE_XP_KM: 2.0,
+  };
+  const baseQuest = {
+    questId: 'TEST-TOTAL-RUNS',
+    questName: '10 Run Adventures',
+    questType: 'TOTAL_RUNS',
+    targetValue: 10,
+    unit: 'RUN',
+    rewardXp: 100,
+    periodType: 'WEEKLY',
+    startDate: '2026-08-10',
+    endDate: '2026-08-16',
+  };
+
+  function progressForRows(rows, config) {
+    return calculateQuestProgress_(
+      baseQuest,
+      mapCompletedActivityRowsForNik_(rows, ownerNik),
+      null,
+      null,
+      config
+    );
+  }
+
+  const shortRows = [];
+  for (let index = 0; index < 10; index += 1) {
+    shortRows.push(testActivityRow_(
+      'SHORT-' + index,
+      ownerNik,
+      '2026-08-10T06:' + String(index).padStart(2, '0') + ':00+07:00',
+      '',
+      0.05,
+      60
+    ));
+  }
+  assertBackendTest_(
+    progressForRows(shortRows, validRunConfig).progress === 0,
+    '10 activity x 50 m tidak boleh menambah TOTAL_RUNS.'
+  );
+
+  const mixedRows = [];
+  for (let index = 0; index < 9; index += 1) {
+    mixedRows.push(testActivityRow_(
+      'VALID-' + index,
+      ownerNik,
+      '2026-08-11T06:' + String(index).padStart(2, '0') + ':00+07:00',
+      '',
+      1.2,
+      600
+    ));
+  }
+  mixedRows.push(testActivityRow_(
+    'TOO-SHORT', ownerNik, '2026-08-11T08:00:00+07:00', '', 0.05, 60
+  ));
+  const mixedProgress = progressForRows(mixedRows, validRunConfig);
+  assertBackendTest_(
+    mixedProgress.progress === 9 && mixedProgress.status === 'IN_PROGRESS',
+    '9 valid activity dan 1 activity pendek harus menghasilkan progress 9.'
+  );
+
+  const thresholdRows = [];
+  for (let index = 0; index < 10; index += 1) {
+    thresholdRows.push(testActivityRow_(
+      'THRESHOLD-' + index,
+      ownerNik,
+      '2026-08-12T06:' + String(index).padStart(2, '0') + ':00+07:00',
+      '',
+      1.0,
+      600
+    ));
+  }
+  const thresholdProgress = progressForRows(thresholdRows, validRunConfig);
+  assertBackendTest_(
+    thresholdProgress.progress === 10 &&
+      thresholdProgress.completed === true &&
+      thresholdProgress.status === 'COMPLETED',
+    '10 activity tepat di threshold harus completed dan siap diklaim.'
+  );
+  const claimableProgress = attachQuestClaim_(thresholdProgress, null);
+  assertBackendTest_(
+    claimableProgress.completed === true && claimableProgress.claimed === false,
+    'TOTAL_RUNS completed tanpa claim harus tetap claimable di client.'
+  );
+  const claimedProgress = attachQuestClaim_(thresholdProgress, {
+    claimId: 'VALID-RUN-CLAIM',
+    claimedAt: new Date('2026-08-16T07:00:00+07:00'),
+  });
+  assertBackendTest_(
+    claimedProgress.completed === true &&
+      claimedProgress.claimed === true &&
+      claimedProgress.claimId === 'VALID-RUN-CLAIM',
+    'TOTAL_RUNS yang sudah diklaim harus mempertahankan state claimed.'
+  );
+
+  assertBackendTest_(
+    progressForRows([
+      testActivityRow_('FIVE-KM', ownerNik, '2026-08-13T06:00:00+07:00', '', 5, 1800),
+    ], validRunConfig).progress === 1,
+    'Activity 5 km harus dihitung sebagai 1 run, bukan 5.'
+  );
+
+  const duplicateRow = testActivityRow_(
+    'DUPLICATE', ownerNik, '2026-08-13T07:00:00+07:00', '', 1.5, 700
+  );
+  assertBackendTest_(
+    progressForRows([duplicateRow, Object.assign({}, duplicateRow)], validRunConfig).progress === 1,
+    'ActivityId duplicate hanya boleh dihitung sekali.'
+  );
+
+  assertBackendTest_(
+    progressForRows([
+      testActivityRow_('OWNER', ownerNik, '2026-08-14T06:00:00+07:00', '', 1.5, 700),
+      testActivityRow_('OTHER', otherNik, '2026-08-14T06:00:00+07:00', '', 10, 3600),
+    ], validRunConfig).progress === 1,
+    'TOTAL_RUNS hanya boleh menghitung activity milik NIK yang diminta.'
+  );
+
+  assertBackendTest_(
+    progressForRows([
+      testActivityRow_('IN-PERIOD', ownerNik, '2026-08-15T06:00:00+07:00', '', 1.5, 700),
+      testActivityRow_('OUT-PERIOD', ownerNik, '2026-08-20T06:00:00+07:00', '', 10, 3600),
+    ], validRunConfig).progress === 1,
+    'Activity di luar periode Quest tidak boleh dihitung.'
+  );
+
+  const fallbackRows = [
+    testActivityRow_('FALLBACK-SHORT', ownerNik, '2026-08-15T07:00:00+07:00', '', 0.99, 600),
+    testActivityRow_('FALLBACK-VALID', ownerNik, '2026-08-15T08:00:00+07:00', '', 1.0, 600),
+  ];
+  assertBackendTest_(
+    progressForRows(fallbackRows, {}).progress === 1,
+    'Config missing harus memakai fallback 1.0 km.'
+  );
+  assertBackendTest_(
+    progressForRows(fallbackRows, { MIN_DISTANCE_VALID_RUN_KM: 'invalid' }).progress === 1,
+    'Config invalid harus memakai fallback 1.0 km.'
+  );
+
+  assertBackendTest_(
+    progressForRows([
+      testActivityRow_('SEPARATE-XP', ownerNik, '2026-08-16T06:00:00+07:00', '', 1.5, 700),
+    ], validRunConfig).progress === 1,
+    'TOTAL_RUNS harus mengikuti MIN_DISTANCE_VALID_RUN_KM, bukan MIN_DISTANCE_XP_KM.'
+  );
+
+  return {
+    ok: true,
+    shortActivitiesExcluded: true,
+    mixedDistances: true,
+    exactThresholdClaimable: true,
+    claimedStatePreserved: true,
+    longActivityCountsOnce: true,
+    duplicateSafe: true,
+    ownerIsolation: true,
+    periodFiltering: true,
+    missingConfigFallback: true,
+    invalidConfigFallback: true,
+    xpThresholdSeparated: true,
   };
 }
 

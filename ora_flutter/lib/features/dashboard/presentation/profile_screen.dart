@@ -206,10 +206,28 @@ class ProfileScreen extends StatelessWidget {
               onViewRoute: () => _showRoute(context, activity),
               onDelete: activity.syncStatus == ActivitySyncStatus.notEligible
                   ? () => _deleteNotEligible(context, activity)
+                  : activity.syncStatus == ActivitySyncStatus.synced &&
+                        controller.localActivityIds.contains(
+                          activity.activityId,
+                        )
+                  ? () => _removeLocalData(context, activity)
                   : null,
+              deleteKey: activity.syncStatus == ActivitySyncStatus.synced
+                  ? Key('remove_local_data_${activity.activityId}')
+                  : Key('delete_not_eligible_${activity.activityId}'),
+              deleteLabel: activity.syncStatus == ActivitySyncStatus.synced
+                  ? 'REMOVE LOCAL DATA'
+                  : 'DELETE LOCAL LOG',
             ),
             const SizedBox(height: 10),
           ],
+        if (controller.activityWarning != null) ...[
+          const SizedBox(height: 8),
+          Text(
+            controller.activityWarning!,
+            style: const TextStyle(color: OraColors.orange, fontSize: 11),
+          ),
+        ],
       ],
     ),
   );
@@ -261,14 +279,58 @@ class ProfileScreen extends StatelessWidget {
       ),
     );
     if (confirmed != true) return;
-    final deleted = await controller.deleteNotEligibleActivity(
-      activity.activityId,
-    );
+    bool deleted;
+    try {
+      deleted = await controller.deleteNotEligibleActivity(activity.activityId);
+    } on Object {
+      deleted = false;
+    }
     if (!context.mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
         content: Text(
           deleted ? 'LOCAL ADVENTURE DELETED' : 'ADVENTURE WAS NOT DELETED',
+        ),
+      ),
+    );
+  }
+
+  Future<void> _removeLocalData(
+    BuildContext context,
+    FinalActivity activity,
+  ) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('REMOVE LOCAL DATA?'),
+        content: const Text(
+          'The activity summary will remain in your Adventure Log because it is already synced. Local route data on this device will be removed.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('CANCEL'),
+          ),
+          FilledButton(
+            key: const Key('confirm_remove_local_data'),
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text('REMOVE'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true) return;
+    bool removed;
+    try {
+      removed = await controller.removeLocalActivityData(activity.activityId);
+    } on Object {
+      removed = false;
+    }
+    if (!context.mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(
+          removed ? 'LOCAL DATA REMOVED' : 'LOCAL DATA WAS NOT REMOVED',
         ),
       ),
     );
@@ -280,10 +342,14 @@ class _ActivityTile extends StatelessWidget {
     this.activity, {
     required this.onViewRoute,
     this.onDelete,
+    this.deleteKey,
+    this.deleteLabel,
   });
   final FinalActivity activity;
   final VoidCallback onViewRoute;
   final VoidCallback? onDelete;
+  final Key? deleteKey;
+  final String? deleteLabel;
 
   @override
   Widget build(BuildContext context) => Container(
@@ -343,10 +409,10 @@ class _ActivityTile extends StatelessWidget {
         if (onDelete != null) ...[
           const SizedBox(height: 6),
           TextButton.icon(
-            key: Key('delete_not_eligible_${activity.activityId}'),
+            key: deleteKey,
             onPressed: onDelete,
             icon: const Icon(Icons.delete_outline),
-            label: const Text('DELETE LOCAL LOG'),
+            label: Text(deleteLabel ?? 'DELETE LOCAL LOG'),
           ),
         ],
       ],

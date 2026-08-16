@@ -17,6 +17,7 @@ const _actions = {
   'activateNickname',
   'updateNickname',
   'submitActivity',
+  'getActivityHistory',
   'getUserStats',
   'getGuildSummary',
   'getGuildDirectory',
@@ -63,6 +64,7 @@ class _ContractTransport implements ApiTransport {
     'activateNickname' => '{"ok":true,"data":{"participant":{"nik":"1001","nickname":"HERO","divisionGuild":"OPS","status":"ACTIVE"},"nicknameSaved":true,"alreadyActivated":false}}',
     'updateNickname' => '{"ok":true,"data":{"participant":{"nik":"1001","nickname":"NEWHERO","divisionGuild":"OPS","status":"ACTIVE"},"nicknameSaved":true,"unchanged":false}}',
     'submitActivity' => '{"ok":true,"data":{"status":"SAVED","activityId":"A1","message":"Activity saved"}}',
+    'getActivityHistory' => '{"ok":true,"data":{"activities":[{"activityId":"A1","startTime":"2026-08-14T00:00:00.000Z","endTime":"2026-08-14T00:30:00.000Z","durationSec":1800,"distanceKm":5.5,"avgPace":"05:27","status":"COMPLETED","source":"ANDROID","syncedAt":"2026-08-14T00:31:00.000Z"}],"limit":50,"offset":0,"total":1,"hasMore":false}}',
     'getUserStats' => '{"ok":true,"stats":{"nik":"1001","nickname":"RUNNER","division":"OPS","totalActivities":2,"totalDistanceKm":5.5,"totalDurationSec":1800,"totalXP":55,"currentLevel":2,"currentLevelName":"SCOUT","nextLevelXP":100,"lastActivityId":"A1","lastActivityAt":"2026-08-14","updatedAt":null}}',
     'getGuildSummary' => '{"ok":true,"status":"ACTIVE","guild":{"guildId":"OPS","guildName":"OPS","displayName":"OPERATIONS","description":"FAST","memberCount":2,"activeMemberCount":2,"totalDistanceKm":10,"totalActivities":4,"totalXP":100,"currentLevel":2,"currentLevelName":"TEAM"},"members":[{"nik":"1001","nickname":"RUNNER","division":"OPS","totalDistanceKm":5.5,"totalActivities":2,"totalXP":55,"currentLevel":2,"currentLevelName":"SCOUT"}]}',
     'getGuildDirectory' => '{"ok":true,"guilds":[{"guildId":"OPS","guildName":"OPS","displayName":"OPERATIONS","description":"FAST","status":"ACTIVE","memberCount":2,"activeMemberCount":2,"totalDistanceKm":10,"totalActivities":4,"totalXP":100,"currentLevel":2,"currentLevelName":"TEAM"}]}',
@@ -88,7 +90,7 @@ class _StaticTransport implements ApiTransport {
 }
 
 void main() {
-  test('all 14 action contracts parse successful fixtures with exact payload names', () async {
+  test('all 15 action contracts parse successful fixtures with exact payload names', () async {
     final transport = _ContractTransport();
     final client = AppsScriptClient(transport: transport);
     final auth = AppsScriptAuthApi(client);
@@ -126,6 +128,10 @@ void main() {
       ),
       'SAVED',
     );
+    final history = await api.activityHistory('fixture');
+    expect(history.single.activityId, 'A1');
+    expect(history.single.distanceKm, 5.5);
+    expect(history.single.averagePaceSecondsPerKm, 327);
     expect((await api.userStats('fixture')).totalXp, 55);
     expect((await api.guildData('fixture')).guild?.resolvedName, 'OPERATIONS');
     expect(
@@ -168,9 +174,18 @@ void main() {
     );
     expect(leaderboard['scope'], 'GLOBAL');
     expect(leaderboard['metric'], 'TOTAL_XP');
+    final activityHistory = transport.requests.singleWhere(
+      (item) => item['action'] == 'getActivityHistory',
+    );
+    expect(activityHistory, {
+      'action': 'getActivityHistory',
+      'sessionToken': 'fixture',
+      'limit': 50,
+      'offset': 0,
+    });
   });
 
-  test('all 14 actions preserve backend error codes', () async {
+  test('all 15 actions preserve backend error codes', () async {
     for (final action in _actions) {
       final transport = _ContractTransport()..failAction = action;
       final client = AppsScriptClient(transport: transport);

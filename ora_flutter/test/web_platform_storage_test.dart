@@ -212,6 +212,8 @@ void main() {
     );
     expect((await reloaded.recoverableRun('1001'))?.sessionId, 'S1');
     expect(await reloaded.recoverableRun('2002'), isNull);
+    expect(await reloaded.pointDecisions('S1', '1001'), hasLength(1));
+    expect(await reloaded.pointDecisions('S1', '2002'), isEmpty);
 
     final ended = run.copyWith(
       status: TrackingStatus.finalizing,
@@ -237,4 +239,104 @@ void main() {
     expect((await reloaded.acceptedRoute(first.activityId, '1001')).length, 1);
     expect(await reloaded.recoverableRun('1001'), isNull);
   });
+
+  test(
+    'Web removeLocalData clears synced route and queue only locally',
+    () async {
+      final databaseName =
+          'ora_web_remove_${DateTime.now().microsecondsSinceEpoch}';
+      final factory = newIdbFactoryMemory();
+      final store = WebActivityStore(
+        factory: factory,
+        databaseName: databaseName,
+      );
+      final run = RunSession(
+        sessionId: 'WEB_SYNCED',
+        ownerNik: '1001',
+        nicknameSnapshot: 'RUNNER',
+        divisionGuildSnapshot: 'OPS',
+        status: TrackingStatus.finalizing,
+        policyVersion: 3,
+        startEpochMillis: 100000,
+        endEpochMillis: 160000,
+        startMonotonicMillis: 1000,
+        bootEpochMillis: 99000,
+        activeAccumulatedMillis: 60000,
+        lastCheckpointMonotonicMillis: 61000,
+        distanceMeters: 100,
+        acceptedPoints: 1,
+        rejectedPoints: 0,
+        createdAtMillis: 100000,
+        updatedAtMillis: 160000,
+      );
+      const other = FinalActivity(
+        activityId: 'WEB_OTHER',
+        ownerNik: '1001',
+        nicknameSnapshot: 'RUNNER',
+        divisionGuildSnapshot: 'OPS',
+        startDateTimeMillis: 200000,
+        endDateTimeMillis: 260000,
+        distanceMeters: 1000,
+        activeDurationMillis: 60000,
+        averagePaceSecondsPerKm: 60,
+        createdAtMillis: 260000,
+        syncStatus: ActivitySyncStatus.pending,
+      );
+      await store.createRun(
+        run,
+        const RunEvent(
+          eventId: 'WEB_E1',
+          sessionId: 'WEB_SYNCED',
+          type: 'START',
+          monotonicMillis: 1000,
+          epochMillis: 100000,
+        ),
+      );
+      await store.recordPointDecision(
+        run,
+        const PersistedPointDecision(
+          sessionId: 'WEB_SYNCED',
+          sample: RawLocationSample(
+            latitude: -6.2,
+            longitude: 106.8,
+            accuracyMeters: 8,
+            providerMonotonicMillis: 2000,
+            receivedMonotonicMillis: 2000,
+            epochMillis: 101000,
+            sequence: 1,
+          ),
+          decision: LocationDecision(
+            type: LocationDecisionType.accepted,
+            segmentMeters: 100,
+          ),
+        ),
+      );
+      final activity = await store.finalizeRun(run);
+      final queue = (await store.dueSync('1001', 0, force: true)).single;
+      await store.acknowledgeSync(
+        queue.queueId,
+        queue.activityId,
+        '1001',
+        serverStatus: 'SAVED',
+        acknowledgedAtMillis: 170000,
+      );
+      await store.insert(other);
+
+      expect(
+        await store.acceptedRoute(activity.activityId, '1001'),
+        hasLength(1),
+      );
+      expect(await store.removeLocalData(activity.activityId, '1001'), isTrue);
+
+      expect(await store.acceptedRoute(activity.activityId, '1001'), isEmpty);
+      expect(await store.pointDecisions('WEB_SYNCED', '1001'), isEmpty);
+      expect((await store.newestFirst('1001')).map((item) => item.activityId), [
+        'WEB_OTHER',
+      ]);
+      expect(
+        (await store.dueSync('1001', 999999, force: true)).single.activityId,
+        'WEB_OTHER',
+      );
+    },
+  );
 }
