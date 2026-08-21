@@ -279,7 +279,7 @@ class _GuildScreenState extends State<GuildScreen> {
                 assetName: 'trophy.png',
                 valueStyle: OraTextStyles.displayLarge.copyWith(
                   color: OraColors.forestDeep,
-                  fontSize: 24,
+                  fontSize: 15,
                 ),
                 valuePadding: const EdgeInsets.symmetric(
                   horizontal: 12,
