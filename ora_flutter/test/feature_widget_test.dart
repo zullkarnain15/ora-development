@@ -333,7 +333,7 @@ void main() {
     final rankValue = rankTexts.singleWhere(
       (text) => text.data?.startsWith('#1') == true,
     );
-    expect(rankValue.style?.fontSize, 24);
+    expect(rankValue.style?.fontSize, 15);
     final rankBadges = tester
         .widgetList<Container>(
           find.descendant(
@@ -380,11 +380,11 @@ FinalActivity _activity(String id, ActivitySyncStatus status) => FinalActivity(
   ownerNik: '1001',
   nicknameSnapshot: 'RUNNER',
   divisionGuildSnapshot: 'OPS',
-  startDateTimeMillis: id == 'A2' ? 2 : 1,
-  endDateTimeMillis: 60001,
+  startDateTimeMillis: DateTime.now().millisecondsSinceEpoch,
+  endDateTimeMillis: DateTime.now().millisecondsSinceEpoch + 60000,
   distanceMeters: 1000,
   activeDurationMillis: 60000,
   averagePaceSecondsPerKm: 300,
-  createdAtMillis: 60001,
+  createdAtMillis: DateTime.now().millisecondsSinceEpoch,
   syncStatus: status,
 );

@@ -8,7 +8,18 @@ import '../application/feature_controller.dart';
 import '../domain/feature_models.dart';
 import 'formatters.dart';
 
-class ProfileScreen extends StatelessWidget {
+enum _AdventureLogFilter { all, synced, pending, notEligible }
+
+enum _AdventureDateFilter {
+  today,
+  last7Days,
+  last30Days,
+  thisMonth,
+  allTime,
+  custom,
+}
+
+class ProfileScreen extends StatefulWidget {
   const ProfileScreen({
     super.key,
     required this.controller,
@@ -16,6 +27,18 @@ class ProfileScreen extends StatelessWidget {
   });
   final FeatureController controller;
   final VoidCallback onSettings;
+
+  @override
+  State<ProfileScreen> createState() => _ProfileScreenState();
+}
+
+class _ProfileScreenState extends State<ProfileScreen> {
+  _AdventureLogFilter _activityFilter = _AdventureLogFilter.all;
+  _AdventureDateFilter _dateFilter = _AdventureDateFilter.last7Days;
+  DateTimeRange? _customDateRange;
+
+  FeatureController get controller => widget.controller;
+  VoidCallback get onSettings => widget.onSettings;
 
   @override
   Widget build(BuildContext context) => AnimatedBuilder(
@@ -199,8 +222,87 @@ class ProfileScreen extends StatelessWidget {
           )
         else if (controller.activities.isEmpty)
           const Text('NO ADVENTURE YET', textAlign: TextAlign.center)
-        else
-          for (final activity in controller.activities) ...[
+        else ...[
+          Material(
+            color: Colors.transparent,
+            child: DropdownButtonFormField<_AdventureDateFilter>(
+              key: const Key('adventure_date_filter'),
+              initialValue: _dateFilter,
+              decoration: const InputDecoration(
+                labelText: 'DATE RANGE',
+                border: OutlineInputBorder(),
+                isDense: true,
+              ),
+              items: const [
+                DropdownMenuItem(
+                  value: _AdventureDateFilter.today,
+                  child: Text('TODAY'),
+                ),
+                DropdownMenuItem(
+                  value: _AdventureDateFilter.last7Days,
+                  child: Text('LAST 7 DAYS'),
+                ),
+                DropdownMenuItem(
+                  value: _AdventureDateFilter.last30Days,
+                  child: Text('LAST 30 DAYS'),
+                ),
+                DropdownMenuItem(
+                  value: _AdventureDateFilter.thisMonth,
+                  child: Text('THIS MONTH'),
+                ),
+                DropdownMenuItem(
+                  value: _AdventureDateFilter.allTime,
+                  child: Text('ALL TIME'),
+                ),
+                DropdownMenuItem(
+                  value: _AdventureDateFilter.custom,
+                  child: Text('CUSTOM DATE RANGE'),
+                ),
+              ],
+              onChanged: _selectDateFilter,
+            ),
+          ),
+          const SizedBox(height: 12),
+          Material(
+            color: Colors.transparent,
+            child: DropdownButtonFormField<_AdventureLogFilter>(
+              key: const Key('adventure_log_filter'),
+              initialValue: _activityFilter,
+              decoration: const InputDecoration(
+                labelText: 'FILTER ADVENTURES',
+                border: OutlineInputBorder(),
+                isDense: true,
+              ),
+              items: const [
+                DropdownMenuItem(
+                  value: _AdventureLogFilter.all,
+                  child: Text('ALL ADVENTURES'),
+                ),
+                DropdownMenuItem(
+                  value: _AdventureLogFilter.synced,
+                  child: Text('SYNCED'),
+                ),
+                DropdownMenuItem(
+                  value: _AdventureLogFilter.pending,
+                  child: Text('PENDING SYNC'),
+                ),
+                DropdownMenuItem(
+                  value: _AdventureLogFilter.notEligible,
+                  child: Text('NOT ELIGIBLE'),
+                ),
+              ],
+              onChanged: (value) {
+                if (value != null) setState(() => _activityFilter = value);
+              },
+            ),
+          ),
+          const SizedBox(height: 12),
+          if (_filteredActivities.isEmpty)
+            const Text(
+              'NO ADVENTURES MATCH THIS FILTER',
+              textAlign: TextAlign.center,
+            ),
+          for (final activity in _filteredActivities) ...[
             _ActivityTile(
               activity,
               onViewRoute: () => _showRoute(context, activity),
@@ -221,6 +323,7 @@ class ProfileScreen extends StatelessWidget {
             ),
             const SizedBox(height: 10),
           ],
+        ],
         if (controller.activityWarning != null) ...[
           const SizedBox(height: 8),
           Text(
@@ -231,6 +334,86 @@ class ProfileScreen extends StatelessWidget {
       ],
     ),
   );
+
+  List<FinalActivity> get _filteredActivities => controller.activities
+      .where((activity) => _matchesStatus(activity) && _matchesDate(activity))
+      .toList(growable: false);
+
+  bool _matchesStatus(FinalActivity activity) => switch (_activityFilter) {
+    _AdventureLogFilter.all => true,
+    _AdventureLogFilter.synced =>
+      activity.syncStatus == ActivitySyncStatus.synced,
+    _AdventureLogFilter.pending =>
+      activity.syncStatus == ActivitySyncStatus.pending ||
+          activity.syncStatus == ActivitySyncStatus.localOnly,
+    _AdventureLogFilter.notEligible =>
+      activity.syncStatus == ActivitySyncStatus.notEligible,
+  };
+
+  bool _matchesDate(FinalActivity activity) {
+    final date = DateTime.fromMillisecondsSinceEpoch(
+      activity.startDateTimeMillis,
+    );
+    final range = _dateRange;
+    return range == null ||
+        (!date.isBefore(range.start) && date.isBefore(range.end));
+  }
+
+  DateTimeRange? get _dateRange {
+    final today = DateUtils.dateOnly(DateTime.now());
+    switch (_dateFilter) {
+      case _AdventureDateFilter.today:
+        return DateTimeRange(
+          start: today,
+          end: today.add(const Duration(days: 1)),
+        );
+      case _AdventureDateFilter.last7Days:
+        return DateTimeRange(
+          start: today.subtract(const Duration(days: 6)),
+          end: today.add(const Duration(days: 1)),
+        );
+      case _AdventureDateFilter.last30Days:
+        return DateTimeRange(
+          start: today.subtract(const Duration(days: 29)),
+          end: today.add(const Duration(days: 1)),
+        );
+      case _AdventureDateFilter.thisMonth:
+        return DateTimeRange(
+          start: DateTime(today.year, today.month),
+          end: DateTime(today.year, today.month + 1),
+        );
+      case _AdventureDateFilter.custom:
+        if (_customDateRange case final range?) {
+          return DateTimeRange(
+            start: DateUtils.dateOnly(range.start),
+            end: DateUtils.dateOnly(range.end).add(const Duration(days: 1)),
+          );
+        }
+      case _AdventureDateFilter.allTime:
+        return null;
+    }
+    return null;
+  }
+
+  Future<void> _selectDateFilter(_AdventureDateFilter? filter) async {
+    if (filter == null) return;
+    if (filter != _AdventureDateFilter.custom) {
+      setState(() => _dateFilter = filter);
+      return;
+    }
+    final today = DateUtils.dateOnly(DateTime.now());
+    final selected = await showDateRangePicker(
+      context: context,
+      firstDate: DateTime(2020),
+      lastDate: today,
+      initialDateRange: _customDateRange,
+    );
+    if (!mounted || selected == null) return;
+    setState(() {
+      _dateFilter = _AdventureDateFilter.custom;
+      _customDateRange = selected;
+    });
+  }
 
   Future<void> _showRoute(BuildContext context, FinalActivity activity) =>
       showDialog<void>(
