@@ -1,3 +1,15 @@
+import 'package:flutter/foundation.dart';
+
+/// Web camera access is provided by the browser over HTTPS. Native and web
+/// builds intentionally share the same QR check-in flow.
+bool supportsAttendanceQrCamera({
+  required bool isWeb,
+  required TargetPlatform platform,
+}) =>
+    isWeb ||
+    platform == TargetPlatform.android ||
+    platform == TargetPlatform.iOS;
+
 /// Accepts exactly one QR value until the scanner is explicitly reset.
 ///
 /// Camera decoders can emit the same frame more than once, so this gate keeps

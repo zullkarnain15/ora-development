@@ -22,7 +22,7 @@ class AttendanceScannerScreen extends StatefulWidget {
 
   final FeatureController controller;
 
-  /// Test-only override. Production support is Android and iOS only.
+  /// Test-only override. Production supports mobile native and secure web.
   final bool? cameraSupported;
 
   @override
@@ -43,9 +43,10 @@ class _AttendanceScannerScreenState extends State<AttendanceScannerScreen> {
     super.initState();
     _cameraSupported =
         widget.cameraSupported ??
-        (!kIsWeb &&
-            (defaultTargetPlatform == TargetPlatform.android ||
-                defaultTargetPlatform == TargetPlatform.iOS));
+        supportsAttendanceQrCamera(
+          isWeb: kIsWeb,
+          platform: defaultTargetPlatform,
+        );
     if (_cameraSupported) {
       _cameraController = MobileScannerController(
         formats: const [BarcodeFormat.qrCode],
@@ -131,7 +132,7 @@ class _AttendanceScannerScreenState extends State<AttendanceScannerScreen> {
         context,
         icon: Icons.phonelink_erase_outlined,
         title: 'SCANNER NOT AVAILABLE',
-        message: 'QR CHECK-IN IS AVAILABLE ON ANDROID OR IOS.',
+        message: 'QR CHECK-IN REQUIRES A COMPATIBLE CAMERA BROWSER OR APP.',
       );
     }
     return Column(

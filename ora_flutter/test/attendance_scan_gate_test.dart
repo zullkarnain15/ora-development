@@ -1,7 +1,26 @@
+import 'package:flutter/foundation.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:ora_flutter/features/attendance/domain/attendance_scan_gate.dart';
 
 void main() {
+  test('camera support includes secure web and mobile native platforms', () {
+    expect(
+      supportsAttendanceQrCamera(isWeb: true, platform: TargetPlatform.macOS),
+      isTrue,
+    );
+    expect(
+      supportsAttendanceQrCamera(isWeb: false, platform: TargetPlatform.iOS),
+      isTrue,
+    );
+    expect(
+      supportsAttendanceQrCamera(
+        isWeb: false,
+        platform: TargetPlatform.windows,
+      ),
+      isFalse,
+    );
+  });
+
   test('scan gate accepts only the first non-empty QR until reset', () {
     final gate = AttendanceScanGate();
 
