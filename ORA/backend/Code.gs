@@ -1084,7 +1084,17 @@ function runSelectedAttendanceQrAction_(regenerate) {
   if (!sheet || sheet.getName() !== ORA_SHEETS.ATTENDANCE_EVENTS || rowNumber < 2) {
     throw new Error('Pilih satu row event pada Attendance_Event_Master terlebih dahulu.');
   }
-  const headerMap = createHeaderMap_(ORA_HEADERS.Attendance_Event_Master);
+  let headerMap;
+  try {
+    headerMap = getAttendanceQrCodeHeaderMap_(sheet);
+  } catch (error) {
+    SpreadsheetApp.getUi().alert(
+      'QR CODE SETUP ERROR',
+      error && error.message ? error.message : 'Kolom QRCode tidak ditemukan.',
+      SpreadsheetApp.getUi().ButtonSet.OK
+    );
+    return { ok: false, error: error && error.oraCode ? error.oraCode : 'CONFIG_ERROR' };
+  }
   const eventId = String(sheet.getRange(rowNumber, headerMap.EventId + 1).getValue() || '').trim();
   const result = setAttendanceQrToken_(eventId, regenerate);
   SpreadsheetApp.getUi().alert(
@@ -1103,25 +1113,28 @@ function setAttendanceQrToken_(eventId, regenerate) {
   lock.waitLock(10000);
   try {
     const events = getAttendanceEvents_();
+    const sheet = getAttendanceEventsSheet_();
+    const headerMap = getAttendanceQrCodeHeaderMap_(sheet);
     const event = events.find(function (candidate) {
       return candidate.eventId === targetEventId;
     });
     if (!event) throw oraError_('EVENT_NOT_FOUND', 'Event attendance tidak ditemukan.');
 
     if (event.qrToken && !regenerate) {
+      const qrCodeFormula = setAttendanceQrCodeFormula_(sheet, event.rowNumber, headerMap);
       return {
         ok: true,
         generated: false,
         regenerated: false,
         eventId: event.eventId,
         qrToken: event.qrToken,
+        qrCodeFormula: qrCodeFormula,
       };
     }
 
     const token = newUniqueAttendanceQrToken_(events);
-    const headerMap = createHeaderMap_(ORA_HEADERS.Attendance_Event_Master);
-    const sheet = getAttendanceEventsSheet_();
     sheet.getRange(event.rowNumber, headerMap.QRToken + 1).setValue(token);
+    const qrCodeFormula = setAttendanceQrCodeFormula_(sheet, event.rowNumber, headerMap);
     sheet.getRange(event.rowNumber, headerMap.UpdatedAt + 1).setValue(new Date());
     return {
       ok: true,
@@ -1129,10 +1142,60 @@ function setAttendanceQrToken_(eventId, regenerate) {
       regenerated: !!event.qrToken,
       eventId: event.eventId,
       qrToken: token,
+      qrCodeFormula: qrCodeFormula,
     };
   } finally {
     lock.releaseLock();
   }
+}
+
+function getAttendanceQrCodeHeaderMap_(sheet) {
+  const headers = sheet.getRange(1, 1, 1, sheet.getLastColumn()).getDisplayValues()[0];
+  return getRequiredAttendanceQrCodeHeaderMap_(headers);
+}
+
+function getRequiredAttendanceQrCodeHeaderMap_(headers) {
+  const headerMap = createHeaderMap_(headers);
+  const requiredHeaders = ['EventId', 'QRToken', 'QRCode'];
+  const missing = requiredHeaders.filter(function (header) {
+    return headerMap[header] === undefined;
+  });
+  if (missing.length > 0) {
+    throw oraError_(
+      'INVALID_ATTENDANCE_QR_SCHEMA',
+      'Attendance_Event_Master memerlukan kolom: ' + missing.join(', ') +
+        '. Tambahkan header QRCode sebelum membuat QR token.'
+    );
+  }
+  return headerMap;
+}
+
+function setAttendanceQrCodeFormula_(sheet, rowNumber, headerMap) {
+  const formula = buildAttendanceQrCodeFormula_(headerMap, rowNumber);
+  sheet.getRange(rowNumber, headerMap.QRCode + 1).setFormula(formula);
+  return formula;
+}
+
+function buildAttendanceQrCodeFormula_(headerMap, rowNumber) {
+  if (!headerMap || headerMap.QRToken === undefined || headerMap.QRCode === undefined) {
+    throw oraError_(
+      'INVALID_ATTENDANCE_QR_SCHEMA',
+      'Kolom QRToken dan QRCode diperlukan untuk membuat formula QR Code.'
+    );
+  }
+  const qrTokenCell = columnNumberToA1_(headerMap.QRToken + 1) + Number(rowNumber);
+  return '=IMAGE("https://quickchart.io/qr?text="&ENCODEURL(' + qrTokenCell + ')&"&size=250")';
+}
+
+function columnNumberToA1_(columnNumber) {
+  let number = Number(columnNumber);
+  let result = '';
+  while (number > 0) {
+    const remainder = (number - 1) % 26;
+    result = String.fromCharCode(65 + remainder) + result;
+    number = Math.floor((number - 1) / 26);
+  }
+  return result;
 }
 
 function newUniqueAttendanceQrToken_(events) {
@@ -4469,6 +4532,35 @@ function testAttendanceFoundation() {
   assertBackendTest_(getAttendanceFeatureStatus_({ ATTENDANCE_ENABLED: false, ATTENDANCE_QR_ENABLED: true }) === 'ATTENDANCE_DISABLED', 'Config attendance disabled harus dihormati.');
   assertBackendTest_(getAttendanceFeatureStatus_({ ATTENDANCE_ENABLED: true, ATTENDANCE_QR_ENABLED: false }) === 'ATTENDANCE_QR_DISABLED', 'Config QR attendance disabled harus dihormati.');
 
+  const attendanceHeaders = [
+    'EventId', 'EventName', 'EventDate', 'StartTime', 'EndTime', 'CountForStreak',
+    'QRToken', 'Status', 'CreatedAt', 'UpdatedAt', 'QRCode',
+  ];
+  const qrHeaderMap = getRequiredAttendanceQrCodeHeaderMap_(attendanceHeaders);
+  const generatedQrFormula = buildAttendanceQrCodeFormula_(qrHeaderMap, 2);
+  assertBackendTest_(
+    generatedQrFormula === '=IMAGE("https://quickchart.io/qr?text="&ENCODEURL(G2)&"&size=250")',
+    'Formula QR harus memakai payload QRToken dari header, bukan EventId.'
+  );
+  const reorderedQrHeaderMap = getRequiredAttendanceQrCodeHeaderMap_([
+    'QRCode', 'EventId', 'Status', 'QRToken', 'EventName',
+  ]);
+  assertBackendTest_(
+    buildAttendanceQrCodeFormula_(reorderedQrHeaderMap, 7) ===
+      '=IMAGE("https://quickchart.io/qr?text="&ENCODEURL(D7)&"&size=250")',
+    'Formula QR harus mengikuti posisi header QRToken saat kolom berpindah.'
+  );
+  let missingQrCodeHeaderRaised = false;
+  try {
+    getRequiredAttendanceQrCodeHeaderMap_(['EventId', 'QRToken']);
+  } catch (error) {
+    missingQrCodeHeaderRaised = error && error.oraCode === 'INVALID_ATTENDANCE_QR_SCHEMA';
+  }
+  assertBackendTest_(
+    missingQrCodeHeaderRaised,
+    'Kolom QRCode yang hilang harus menghasilkan error admin yang jelas.'
+  );
+
   assertBackendTest_(getAttendanceBaseXp_(rewards) === 20, 'Base XP harus dibaca dari reward master.');
   assertAttendanceConfigError_(function () {
     getAttendanceBaseXp_([]);
@@ -4515,6 +4607,8 @@ function testAttendanceFoundation() {
     inactiveEvent: true,
     eventWindow: true,
     attendanceConfig: true,
+    qrCodeFormula: true,
+    qrCodeHeaderSafety: true,
     rewardMasterOnly: true,
     streakOneTwoThree: true,
     missedEventReset: true,

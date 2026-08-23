@@ -30,17 +30,22 @@ class OraCard extends StatelessWidget {
     super.key,
     required this.child,
     this.padding = const EdgeInsets.all(18),
+    this.gradient,
+    this.borderColor,
   });
   final Widget child;
   final EdgeInsetsGeometry padding;
+  final Gradient? gradient;
+  final Color? borderColor;
 
   @override
   Widget build(BuildContext context) => Container(
     padding: padding,
     decoration: BoxDecoration(
-      color: OraColors.panel,
+      color: gradient == null ? OraColors.panel : null,
+      gradient: gradient,
       borderRadius: BorderRadius.circular(5),
-      border: Border.all(color: OraColors.outline, width: 1.5),
+      border: Border.all(color: borderColor ?? OraColors.outline, width: 1.5),
     ),
     child: child,
   );

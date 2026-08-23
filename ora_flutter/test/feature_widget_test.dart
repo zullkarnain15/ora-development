@@ -72,7 +72,7 @@ void main() {
     await tester.pumpWidget(_host(HomeScreen(controller: controller)));
 
     expect(find.byKey(const Key('home_check_in')), findsOneWidget);
-    expect(find.text('CHECK-IN'), findsOneWidget);
+    expect(find.text('ADVENTURE STAMP'), findsOneWidget);
     expect(find.byIcon(Icons.qr_code_scanner), findsOneWidget);
     expect(tester.takeException(), isNull);
   });

@@ -7,6 +7,7 @@ import 'package:mobile_scanner/mobile_scanner.dart';
 import '../../../core/network/apps_script_client.dart';
 import '../../../core/theme/ora_theme.dart';
 import '../../../shared/widgets/ora_widgets.dart';
+import '../data/attendance_camera_cleanup.dart';
 import '../../dashboard/application/feature_controller.dart';
 import '../../dashboard/domain/feature_models.dart';
 import '../domain/attendance_scan_gate.dart';
@@ -30,17 +31,21 @@ class AttendanceScannerScreen extends StatefulWidget {
       _AttendanceScannerScreenState();
 }
 
-class _AttendanceScannerScreenState extends State<AttendanceScannerScreen> {
+class _AttendanceScannerScreenState extends State<AttendanceScannerScreen>
+    with WidgetsBindingObserver {
   final _scanGate = AttendanceScanGate();
   late final bool _cameraSupported;
   MobileScannerController? _cameraController;
   _ScannerPhase _phase = _ScannerPhase.scanning;
   AttendanceResult? _result;
   String? _errorCode;
+  bool _isClosing = false;
+  bool _canPop = false;
 
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     _cameraSupported =
         widget.cameraSupported ??
         supportsAttendanceQrCamera(
@@ -56,17 +61,70 @@ class _AttendanceScannerScreenState extends State<AttendanceScannerScreen> {
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     final controller = _cameraController;
-    if (controller != null) unawaited(controller.dispose());
+    if (controller != null) unawaited(_stopAndDisposeCamera(controller));
     super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    switch (state) {
+      case AppLifecycleState.detached:
+      case AppLifecycleState.hidden:
+      case AppLifecycleState.inactive:
+      case AppLifecycleState.paused:
+        unawaited(_stopCamera());
+      case AppLifecycleState.resumed:
+        if (_phase == _ScannerPhase.scanning && !_isClosing) {
+          final controller = _cameraController;
+          if (controller != null) unawaited(controller.start());
+        }
+    }
+  }
+
+  Future<void> _stopCamera() async {
+    final controller = _cameraController;
+    if (controller != null) {
+      try {
+        await controller.stop();
+      } on Object {
+        // The scanner error UI handles unavailable cameras; cleanup stays safe.
+      }
+    }
+    releaseAttendanceBrowserCamera();
+  }
+
+  Future<void> _stopAndDisposeCamera(MobileScannerController controller) async {
+    try {
+      await controller.stop();
+    } on Object {
+      // Disposal below still releases any remaining platform resources.
+    }
+    releaseAttendanceBrowserCamera();
+    try {
+      await controller.dispose();
+    } on Object {
+      // The child scanner may have disposed the shared controller first.
+    }
+  }
+
+  Future<void> _closeScanner() async {
+    if (_isClosing) return;
+    _isClosing = true;
+    await _stopCamera();
+    if (!mounted) return;
+    setState(() => _canPop = true);
+    Navigator.of(context).pop();
   }
 
   void _onDetect(BarcodeCapture capture) {
     if (_phase != _ScannerPhase.scanning || capture.barcodes.isEmpty) return;
     final qrToken = capture.barcodes.first.rawValue?.trim() ?? '';
     if (!_scanGate.accept(qrToken)) return;
-    final camera = _cameraController;
-    if (camera != null) unawaited(camera.stop());
+    // On web, stopping the decoder alone can leave the browser camera track
+    // active. Release the complete stream as soon as the payload is accepted.
+    unawaited(_stopCamera());
     setState(() => _phase = _ScannerPhase.submitting);
     unawaited(_submit(qrToken));
   }
@@ -108,20 +166,32 @@ class _AttendanceScannerScreenState extends State<AttendanceScannerScreen> {
   }
 
   @override
-  Widget build(BuildContext context) => Scaffold(
-    appBar: AppBar(
-      title: const Text('CHECK-IN'),
-      backgroundColor: OraColors.forest,
-    ),
-    body: SafeArea(
-      child: Padding(
-        padding: const EdgeInsets.all(20),
-        child: switch (_phase) {
-          _ScannerPhase.scanning => _scannerBody(context),
-          _ScannerPhase.submitting => _submittingBody(),
-          _ScannerPhase.result => _resultBody(context, _result!),
-          _ScannerPhase.error => _errorBody(context, _errorCode),
-        },
+  Widget build(BuildContext context) => PopScope<void>(
+    canPop: _canPop,
+    onPopInvokedWithResult: (didPop, _) {
+      if (!didPop) unawaited(_closeScanner());
+    },
+    child: Scaffold(
+      appBar: AppBar(
+        title: const Text('ADVENTURE STAMP'),
+        backgroundColor: OraColors.forest,
+        leading: IconButton(
+          key: const Key('attendance_scanner_close'),
+          icon: const Icon(Icons.close),
+          tooltip: 'Close scanner',
+          onPressed: _closeScanner,
+        ),
+      ),
+      body: SafeArea(
+        child: Padding(
+          padding: const EdgeInsets.all(20),
+          child: switch (_phase) {
+            _ScannerPhase.scanning => _scannerBody(context),
+            _ScannerPhase.submitting => _submittingBody(),
+            _ScannerPhase.result => _resultBody(context, _result!),
+            _ScannerPhase.error => _errorBody(context, _errorCode),
+          },
+        ),
       ),
     ),
   );
@@ -132,14 +202,15 @@ class _AttendanceScannerScreenState extends State<AttendanceScannerScreen> {
         context,
         icon: Icons.phonelink_erase_outlined,
         title: 'SCANNER NOT AVAILABLE',
-        message: 'QR CHECK-IN REQUIRES A COMPATIBLE CAMERA BROWSER OR APP.',
+        message:
+            'QR ADVENTURE STAMP REQUIRES A COMPATIBLE CAMERA BROWSER OR APP.',
       );
     }
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
         const OraScreenTitle(
-          title: 'SCAN CHECK-IN QR',
+          title: 'SCAN ADVENTURE STAMP QR',
           subtitle: 'POINT YOUR CAMERA AT THE EVENT QR',
         ),
         const SizedBox(height: 20),
@@ -192,10 +263,10 @@ class _AttendanceScannerScreenState extends State<AttendanceScannerScreen> {
       _messageBody(
         context,
         icon: Icons.emoji_events_outlined,
-        title: 'CHECK-IN SUCCESS!',
+        title: 'STAMP CLAIMED!',
         message: result.eventName?.isNotEmpty == true
             ? result.eventName!
-            : 'EVENT CHECK-IN CONFIRMED.',
+            : 'EVENT STAMP CONFIRMED.',
         details: [
           'BASE XP +${result.baseXp}',
           'STREAK ${result.streakCount}',
@@ -205,7 +276,7 @@ class _AttendanceScannerScreenState extends State<AttendanceScannerScreen> {
           'LEVEL ${result.currentLevel}',
         ],
         primaryLabel: 'DONE',
-        onPrimary: () => Navigator.of(context).pop(),
+        onPrimary: _closeScanner,
       );
 
   Widget _alreadyCheckedInBody(BuildContext context) => _messageBody(
@@ -214,7 +285,7 @@ class _AttendanceScannerScreenState extends State<AttendanceScannerScreen> {
     title: 'ALREADY CHECKED IN',
     message: 'YOUR XP HAS NOT CHANGED.',
     primaryLabel: 'DONE',
-    onPrimary: () => Navigator.of(context).pop(),
+    onPrimary: _closeScanner,
   );
 
   Widget _attendanceIssueBody(BuildContext context, AttendanceStatus status) {
@@ -226,29 +297,29 @@ class _AttendanceScannerScreenState extends State<AttendanceScannerScreen> {
       ),
       AttendanceStatus.eventNotStarted => (
         'EVENT NOT STARTED',
-        'CHECK-IN IS NOT OPEN YET.',
+        'ADVENTURE STAMP IS NOT OPEN YET.',
       ),
       AttendanceStatus.eventClosed => (
         'EVENT CLOSED',
-        'CHECK-IN FOR THIS EVENT HAS ENDED.',
+        'ADVENTURE STAMP FOR THIS EVENT HAS ENDED.',
       ),
       AttendanceStatus.attendanceDisabled => (
-        'CHECK-IN UNAVAILABLE',
+        'ADVENTURE STAMP UNAVAILABLE',
         'ATTENDANCE IS DISABLED.',
       ),
       AttendanceStatus.attendanceQrDisabled => (
-        'CHECK-IN UNAVAILABLE',
-        'QR CHECK-IN IS DISABLED.',
+        'ADVENTURE STAMP UNAVAILABLE',
+        'QR ADVENTURE STAMP IS DISABLED.',
       ),
       AttendanceStatus.configurationError => (
-        'CHECK-IN UNAVAILABLE',
+        'ADVENTURE STAMP UNAVAILABLE',
         'EVENT CONFIGURATION NEEDS ADMIN REVIEW.',
       ),
       AttendanceStatus.unauthorized => (
         'SESSION EXPIRED',
         'PLEASE LOGIN AGAIN.',
       ),
-      _ => ('CHECK-IN FAILED', 'PLEASE TRY AGAIN.'),
+      _ => ('ADVENTURE STAMP FAILED', 'PLEASE TRY AGAIN.'),
     };
     final canRetry =
         status != AttendanceStatus.attendanceDisabled &&
@@ -261,7 +332,7 @@ class _AttendanceScannerScreenState extends State<AttendanceScannerScreen> {
       title: copy.$1,
       message: copy.$2,
       primaryLabel: canRetry ? 'SCAN AGAIN' : 'DONE',
-      onPrimary: canRetry ? _scanAgain : () => Navigator.of(context).pop(),
+      onPrimary: canRetry ? _scanAgain : _closeScanner,
     );
   }
 
@@ -273,7 +344,7 @@ class _AttendanceScannerScreenState extends State<AttendanceScannerScreen> {
     return _messageBody(
       context,
       icon: Icons.cloud_off_outlined,
-      title: 'CHECK-IN FAILED',
+      title: 'ADVENTURE STAMP FAILED',
       message: 'PLEASE CHECK YOUR CONNECTION AND SCAN AGAIN.',
       primaryLabel: 'SCAN AGAIN',
       onPrimary: _scanAgain,

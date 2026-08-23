@@ -43,9 +43,9 @@ class HomeScreen extends StatelessWidget {
               const SizedBox(height: 8),
               const AwanHomeGreeting(),
               const SizedBox(height: 20),
-              _adventurerCard(context),
+              _adventureStampCard(context),
               const SizedBox(height: 16),
-              _checkInCard(context),
+              _adventurerCard(context),
               const SizedBox(height: 16),
               _latestCard(context),
             ],
@@ -164,11 +164,17 @@ class HomeScreen extends StatelessWidget {
     );
   }
 
-  Widget _checkInCard(BuildContext context) => OraCard(
+  Widget _adventureStampCard(BuildContext context) => OraCard(
     padding: EdgeInsets.zero,
+    gradient: const LinearGradient(
+      colors: [OraColors.forestLight, OraColors.panelAlt],
+      begin: Alignment.topLeft,
+      end: Alignment.bottomRight,
+    ),
+    borderColor: OraColors.orange,
     child: Semantics(
       button: true,
-      label: 'Check-in with event QR',
+      label: 'Adventure Stamp with event QR',
       child: GestureDetector(
         key: const Key('home_check_in'),
         behavior: HitTestBehavior.opaque,
@@ -181,19 +187,19 @@ class HomeScreen extends StatelessWidget {
           padding: EdgeInsets.all(18),
           child: Row(
             children: [
-              Icon(Icons.qr_code_scanner, size: 40, color: OraColors.gold),
+              _AdventureStampIcon(),
               SizedBox(width: 16),
               Expanded(
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Text('CHECK-IN', style: OraTextStyles.displayMedium),
+                    Text('ADVENTURE STAMP', style: OraTextStyles.displayMedium),
                     SizedBox(height: 8),
-                    Text('SCAN EVENT QR TO CLAIM YOUR XP'),
+                    Text('SCAN EVENT QR • CLAIM YOUR XP'),
                   ],
                 ),
               ),
-              Icon(Icons.chevron_right, color: OraColors.creamMuted),
+              Icon(Icons.arrow_forward_ios, size: 18, color: OraColors.gold),
             ],
           ),
         ),
@@ -286,4 +292,20 @@ class HomeScreen extends StatelessWidget {
           ],
         ),
       );
+}
+
+class _AdventureStampIcon extends StatelessWidget {
+  const _AdventureStampIcon();
+
+  @override
+  Widget build(BuildContext context) => Container(
+    width: 48,
+    height: 48,
+    decoration: BoxDecoration(
+      color: OraColors.orange,
+      borderRadius: BorderRadius.circular(4),
+      border: Border.all(color: OraColors.gold, width: 2),
+    ),
+    child: const Icon(Icons.qr_code_scanner, color: OraColors.forestDeep),
+  );
 }
