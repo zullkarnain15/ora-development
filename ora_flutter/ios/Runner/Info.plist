@@ -30,6 +30,8 @@
 	<string>ORA uses precise location to measure your run while an adventure is active.</string>
 	<key>NSLocationAlwaysAndWhenInUseUsageDescription</key>
 	<string>ORA uses location in the background only while you choose to track an active adventure.</string>
+	<key>NSCameraUsageDescription</key>
+	<string>ORA uses your camera to scan an event QR code for attendance check-in.</string>
 	<key>UIBackgroundModes</key>
 	<array>
 		<string>location</string>

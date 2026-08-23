@@ -39,6 +39,7 @@ dependencies:
   sqflite: ^2.4.3
   path: ^1.9.1
   web: ^1.1.1
+  mobile_scanner: ^7.4.0
 dev_dependencies:
   flutter_test:
     sdk: flutter
@@ -73,6 +74,7 @@ flutter:
 
   assets:
     - assets/images/
+    - assets/mascot/awan/
 
   fonts:
     - family: PressStart2P

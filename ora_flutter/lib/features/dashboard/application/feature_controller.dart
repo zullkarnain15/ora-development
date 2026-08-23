@@ -38,6 +38,7 @@ class FeatureController extends ChangeNotifier {
   String? claimingQuestId;
   String? claimMessage;
   String? claimMessageQuestId;
+  Future<AttendanceResult>? _attendanceSubmission;
 
   LoadPhase guildPhase = LoadPhase.idle;
   GuildData? guildData;
@@ -163,6 +164,31 @@ class FeatureController extends ChangeNotifier {
       claimingQuestId = null;
       _safeNotify();
     }
+  }
+
+  bool get isSubmittingAttendance => _attendanceSubmission != null;
+
+  Future<AttendanceResult> submitAttendance(String qrToken) async {
+    final inFlight = _attendanceSubmission;
+    if (inFlight != null) return inFlight;
+
+    final submission = _submitAttendance(qrToken);
+    _attendanceSubmission = submission;
+    _safeNotify();
+    try {
+      return await submission;
+    } finally {
+      _attendanceSubmission = null;
+      _safeNotify();
+    }
+  }
+
+  Future<AttendanceResult> _submitAttendance(String qrToken) async {
+    final result = await api.submitAttendance(session.sessionToken, qrToken);
+    if (result.awarded) {
+      await Future.wait([loadStats(force: true), loadQuests(force: true)]);
+    }
+    return result;
   }
 
   Future<void> loadGuild({bool force = false}) async {

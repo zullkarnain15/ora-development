@@ -24,6 +24,7 @@ const _actions = {
   'getLeaderboard',
   'getQuestProgress',
   'claimQuestReward',
+  'submitAttendance',
 };
 
 class _ContractTransport implements ApiTransport {
@@ -71,6 +72,7 @@ class _ContractTransport implements ApiTransport {
     'getLeaderboard' => '{"ok":true,"scope":"GLOBAL","metric":"TOTAL_XP","status":"ACTIVE","leaderboard":[{"rank":1,"nik":"1001","nickname":"RUNNER","division":"OPS","totalXP":55,"totalDistanceKm":5.5,"totalActivities":2,"currentLevel":2,"currentLevelName":"SCOUT"}],"currentUserRank":{"rank":1,"metricValue":55}}',
     'getQuestProgress' => '{"ok":true,"quests":[{"questId":"Q1","name":"FIRST RUN","type":"RUN_COUNT","target":1,"unit":"RUN","rewardXp":10,"period":"DAILY","activeFrom":"","activeTo":"","progress":1,"progressPercent":100,"status":"ACTIVE","completed":true,"claimable":true,"claimed":false}]}',
     'claimQuestReward' => '{"ok":true,"data":{"status":"CLAIMED","claim":{"questId":"Q1","rewardXp":10,"status":"CLAIMED","claimId":"C1","claimedAt":"2026-08-14"}}}',
+    'submitAttendance' => '{"ok":true,"data":{"status":"SUCCESS","eventId":"E1","eventName":"MORNING RUN","checkInAt":"2026-08-14T00:00:00.000Z","baseXP":20,"streakCount":3,"streakBonusXP":30,"totalXP":50,"currentXP":105,"currentLevel":2}}',
     _ => throw StateError('Missing fixture for $action'),
   };
 }
@@ -90,7 +92,7 @@ class _StaticTransport implements ApiTransport {
 }
 
 void main() {
-  test('all 15 action contracts parse successful fixtures with exact payload names', () async {
+  test('all 16 action contracts parse successful fixtures with exact payload names', () async {
     final transport = _ContractTransport();
     final client = AppsScriptClient(transport: transport);
     final auth = AppsScriptAuthApi(client);
@@ -147,6 +149,9 @@ void main() {
       QuestVisualState.claimable,
     );
     expect((await api.claimQuest('fixture', 'Q1')).claimId, 'C1');
+    final attendance = await api.submitAttendance('fixture', 'QR-TOKEN');
+    expect(attendance.status, AttendanceStatus.success);
+    expect(attendance.totalXp, 50);
 
     expect(transport.requests.map((item) => item['action']).toSet(), _actions);
     final login = transport.requests.singleWhere(
@@ -183,9 +188,17 @@ void main() {
       'limit': 50,
       'offset': 0,
     });
+    final attendanceRequest = transport.requests.singleWhere(
+      (item) => item['action'] == 'submitAttendance',
+    );
+    expect(attendanceRequest, {
+      'action': 'submitAttendance',
+      'sessionToken': 'fixture',
+      'qrToken': 'QR-TOKEN',
+    });
   });
 
-  test('all 15 actions preserve backend error codes', () async {
+  test('all 16 actions preserve backend error codes', () async {
     for (final action in _actions) {
       final transport = _ContractTransport()..failAction = action;
       final client = AppsScriptClient(transport: transport);

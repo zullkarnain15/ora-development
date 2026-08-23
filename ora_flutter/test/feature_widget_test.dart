@@ -12,6 +12,7 @@ import 'package:ora_flutter/features/dashboard/presentation/guild_screen.dart';
 import 'package:ora_flutter/features/dashboard/presentation/home_screen.dart';
 import 'package:ora_flutter/features/dashboard/presentation/quest_screen.dart';
 import 'package:ora_flutter/features/dashboard/presentation/profile_screen.dart';
+import 'package:ora_flutter/features/attendance/presentation/attendance_scanner_screen.dart';
 
 class _NeverTransport implements ApiTransport {
   @override
@@ -62,6 +63,36 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
+  testWidgets('Home exposes a tappable QR check-in card without a new tab', (
+    tester,
+  ) async {
+    final controller = _controller()
+      ..statsPhase = LoadPhase.ready
+      ..activityPhase = LoadPhase.ready;
+    await tester.pumpWidget(_host(HomeScreen(controller: controller)));
+
+    expect(find.byKey(const Key('home_check_in')), findsOneWidget);
+    expect(find.text('CHECK-IN'), findsOneWidget);
+    expect(find.byIcon(Icons.qr_code_scanner), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('QR scanner degrades safely when camera is unsupported', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      _host(
+        AttendanceScannerScreen(
+          controller: _controller(),
+          cameraSupported: false,
+        ),
+      ),
+    );
+
+    expect(find.text('SCANNER NOT AVAILABLE'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+
   testWidgets('Home last adventure can open unavailable local route', (
     tester,
   ) async {
@@ -97,6 +128,36 @@ void main() {
     );
     expect(find.text('QUESTS UNAVAILABLE - TRY AGAIN'), findsOneWidget);
     expect(find.text('TRY AGAIN'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('Attendance COUNT quest renders on the existing quest card', (
+    tester,
+  ) async {
+    final controller = _controller()
+      ..questPhase = LoadPhase.ready
+      ..quests = const [
+        Quest(
+          questId: 'AQ-COUNT',
+          questName: 'JOIN THE PACK',
+          questType: 'ATTENDANCE',
+          targetValue: 3,
+          unit: 'COUNT',
+          rewardXp: 100,
+          periodType: 'WEEKLY',
+          startDate: '',
+          endDate: '',
+          progress: 2,
+          progressPercent: 66.67,
+          status: 'IN_PROGRESS',
+        ),
+      ];
+
+    await tester.pumpWidget(_host(QuestScreen(controller: controller)));
+
+    expect(find.text('JOIN THE PACK'), findsOneWidget);
+    expect(find.text('2 / 3 ATTENDANCE'), findsOneWidget);
+    expect(find.text('IN PROGRESS'), findsOneWidget);
     expect(tester.takeException(), isNull);
   });
 

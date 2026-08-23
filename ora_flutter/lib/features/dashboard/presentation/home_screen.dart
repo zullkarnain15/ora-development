@@ -1,9 +1,11 @@
 import 'package:flutter/material.dart';
 
 import '../../../core/theme/ora_theme.dart';
+import '../../mascot/awan_home_greeting.dart';
 import '../../../shared/widgets/ora_widgets.dart';
 import '../../activity/domain/final_activity.dart';
 import '../../activity/presentation/activity_route_viewer.dart';
+import '../../attendance/presentation/attendance_scanner_screen.dart';
 import '../application/feature_controller.dart';
 import '../domain/feature_models.dart';
 import 'formatters.dart';
@@ -18,26 +20,36 @@ class HomeScreen extends StatelessWidget {
     builder: (context, _) => SafeArea(
       child: RefreshIndicator(
         onRefresh: () => controller.loadHome(force: true),
-        child: ListView(
+        child: SingleChildScrollView(
+          physics: const AlwaysScrollableScrollPhysics(),
           padding: const EdgeInsets.all(20),
-          children: [
-            const OraScreenTitle(
-              title: 'ORA',
-              subtitle: 'OTO RUNNERS ADVENTURE',
-              assetName: 'oto_runners.PNG',
-            ),
-            const SizedBox(height: 24),
-            Text('WELCOME,', style: Theme.of(context).textTheme.bodyMedium),
-            const SizedBox(height: 6),
-            Text(
-              controller.session.nickname,
-              style: OraTextStyles.displayLarge.copyWith(color: OraColors.gold),
-            ),
-            const SizedBox(height: 20),
-            _adventurerCard(context),
-            const SizedBox(height: 16),
-            _latestCard(context),
-          ],
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              const OraScreenTitle(
+                title: 'ORA',
+                subtitle: 'OTO RUNNERS ADVENTURE',
+                assetName: 'oto_runners.PNG',
+              ),
+              const SizedBox(height: 24),
+              Text('WELCOME,', style: Theme.of(context).textTheme.bodyMedium),
+              const SizedBox(height: 6),
+              Text(
+                controller.session.nickname,
+                style: OraTextStyles.displayLarge.copyWith(
+                  color: OraColors.gold,
+                ),
+              ),
+              const SizedBox(height: 8),
+              const AwanHomeGreeting(),
+              const SizedBox(height: 20),
+              _adventurerCard(context),
+              const SizedBox(height: 16),
+              _checkInCard(context),
+              const SizedBox(height: 16),
+              _latestCard(context),
+            ],
+          ),
         ),
       ),
     ),
@@ -151,6 +163,43 @@ class HomeScreen extends StatelessWidget {
       ],
     );
   }
+
+  Widget _checkInCard(BuildContext context) => OraCard(
+    padding: EdgeInsets.zero,
+    child: Semantics(
+      button: true,
+      label: 'Check-in with event QR',
+      child: GestureDetector(
+        key: const Key('home_check_in'),
+        behavior: HitTestBehavior.opaque,
+        onTap: () => Navigator.of(context).push(
+          MaterialPageRoute<void>(
+            builder: (_) => AttendanceScannerScreen(controller: controller),
+          ),
+        ),
+        child: const Padding(
+          padding: EdgeInsets.all(18),
+          child: Row(
+            children: [
+              Icon(Icons.qr_code_scanner, size: 40, color: OraColors.gold),
+              SizedBox(width: 16),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text('CHECK-IN', style: OraTextStyles.displayMedium),
+                    SizedBox(height: 8),
+                    Text('SCAN EVENT QR TO CLAIM YOUR XP'),
+                  ],
+                ),
+              ),
+              Icon(Icons.chevron_right, color: OraColors.creamMuted),
+            ],
+          ),
+        ),
+      ),
+    ),
+  );
 
   Widget _latestCard(BuildContext context) {
     if (controller.activityPhase == LoadPhase.loading &&

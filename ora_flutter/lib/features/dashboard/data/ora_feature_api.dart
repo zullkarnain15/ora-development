@@ -17,6 +17,10 @@ abstract interface class OraFeatureApi {
   );
   Future<List<Quest>> questProgress(String sessionToken);
   Future<QuestClaim> claimQuest(String sessionToken, String questId);
+  Future<AttendanceResult> submitAttendance(
+    String sessionToken,
+    String qrToken,
+  );
   Future<String> submitActivity(
     String sessionToken,
     ActivityUploadPayload payload,
@@ -163,6 +167,22 @@ class AppsScriptFeatureApi implements OraFeatureApi {
     final claim = data.object('claim');
     if (claim == null) return _invalid('Quest claim is missing.');
     return _parse(() => QuestClaim.fromJson(claim));
+  }
+
+  @override
+  Future<AttendanceResult> submitAttendance(
+    String sessionToken,
+    String qrToken,
+  ) async {
+    final data = await client.call('submitAttendance', {
+      'sessionToken': sessionToken,
+      'qrToken': qrToken,
+    });
+    final result = _parse(() => AttendanceResult.fromJson(data));
+    if (result.status == AttendanceStatus.unknown) {
+      return _invalid('Attendance status is invalid.');
+    }
+    return result;
   }
 
   @override

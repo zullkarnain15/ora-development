@@ -137,6 +137,11 @@ class Quest {
       status != 'NO_GUILD' &&
       claimBlockedReason != 'GUILD_REWARD_NOT_READY';
 
+  String get progressUnit =>
+      questType == 'ATTENDANCE' && unit.toUpperCase() == 'COUNT'
+      ? 'ATTENDANCE'
+      : unit;
+
   Quest withClaim({String? claimId, String? claimedAt}) => Quest(
     questId: questId,
     questName: questName,
@@ -206,6 +211,82 @@ class QuestClaim {
     claimId: json.nullableString('claimId'),
     claimedAt: json.nullableString('claimedAt'),
   );
+}
+
+enum AttendanceStatus {
+  success,
+  alreadyCheckedIn,
+  invalidQr,
+  eventInactive,
+  eventNotStarted,
+  eventClosed,
+  attendanceDisabled,
+  attendanceQrDisabled,
+  configurationError,
+  unauthorized,
+  unknown,
+}
+
+AttendanceStatus attendanceStatusFromApi(String value) => switch (value) {
+  'SUCCESS' => AttendanceStatus.success,
+  'ALREADY_CHECKED_IN' => AttendanceStatus.alreadyCheckedIn,
+  'INVALID_QR' => AttendanceStatus.invalidQr,
+  'EVENT_INACTIVE' => AttendanceStatus.eventInactive,
+  'EVENT_NOT_STARTED' => AttendanceStatus.eventNotStarted,
+  'EVENT_CLOSED' => AttendanceStatus.eventClosed,
+  'ATTENDANCE_DISABLED' => AttendanceStatus.attendanceDisabled,
+  'ATTENDANCE_QR_DISABLED' => AttendanceStatus.attendanceQrDisabled,
+  'CONFIG_ERROR' => AttendanceStatus.configurationError,
+  'UNAUTHORIZED' || 'SESSION_EXPIRED' => AttendanceStatus.unauthorized,
+  _ => AttendanceStatus.unknown,
+};
+
+class AttendanceResult {
+  const AttendanceResult({
+    required this.status,
+    required this.rawStatus,
+    this.eventId,
+    this.eventName,
+    this.checkInAt,
+    required this.baseXp,
+    required this.streakCount,
+    required this.streakBonusXp,
+    required this.totalXp,
+    required this.currentXp,
+    required this.currentLevel,
+  });
+
+  final AttendanceStatus status;
+  final String rawStatus;
+  final String? eventId;
+  final String? eventName;
+  final String? checkInAt;
+  final int baseXp;
+  final int streakCount;
+  final int streakBonusXp;
+  final int totalXp;
+  final int currentXp;
+  final int currentLevel;
+
+  bool get awarded => status == AttendanceStatus.success;
+  bool get alreadyCheckedIn => status == AttendanceStatus.alreadyCheckedIn;
+
+  factory AttendanceResult.fromJson(Map<String, Object?> json) {
+    final rawStatus = json.string('status');
+    return AttendanceResult(
+      status: attendanceStatusFromApi(rawStatus),
+      rawStatus: rawStatus,
+      eventId: json.nullableString('eventId'),
+      eventName: json.nullableString('eventName'),
+      checkInAt: json.nullableString('checkInAt'),
+      baseXp: json.integer('baseXP'),
+      streakCount: json.integer('streakCount'),
+      streakBonusXp: json.integer('streakBonusXP'),
+      totalXp: json.integer('totalXP'),
+      currentXp: json.integer('currentXP'),
+      currentLevel: json.integer('currentLevel'),
+    );
+  }
 }
 
 class GuildSummary {

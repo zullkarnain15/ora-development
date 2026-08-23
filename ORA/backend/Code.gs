@@ -43,6 +43,9 @@ const ORA_SHEETS = Object.freeze({
   USER_STATS: 'User_Stats',
   QUEST_CLAIMS: 'Quest_Claims',
   GUILD_MASTER: 'Guild_Master',
+  ATTENDANCE_EVENTS: 'Attendance_Event_Master',
+  ATTENDANCE_RECORDS: 'Attendance_Records',
+  ATTENDANCE_REWARDS: 'Attendance_Reward_Master',
 });
 
 const ORA_HEADERS = Object.freeze({
@@ -127,6 +130,32 @@ const ORA_HEADERS = Object.freeze({
     'CreatedAt',
     'UpdatedAt',
   ],
+  Attendance_Event_Master: [
+    'EventId',
+    'EventName',
+    'EventDate',
+    'StartTime',
+    'EndTime',
+    'CountForStreak',
+    'QRToken',
+    'Status',
+    'CreatedAt',
+    'UpdatedAt',
+  ],
+  Attendance_Records: [
+    'AttendanceId',
+    'EventId',
+    'NIK',
+    'Nickname',
+    'CheckInAt',
+    'BaseXP',
+    'StreakCount',
+    'StreakBonusXP',
+    'TotalXP',
+    'Status',
+    'CreatedAt',
+  ],
+  Attendance_Reward_Master: ['RewardType', 'Milestone', 'XP', 'Status'],
 });
 
 /**
@@ -173,6 +202,7 @@ function doGet(e) {
  * {"action":"getLeaderboard","sessionToken":"...","scope":"GLOBAL","metric":"TOTAL_XP"}
  * {"action":"getQuestProgress","sessionToken":"..."}
  * {"action":"claimQuestReward","sessionToken":"...","questId":"DEV-Q001"}
+ * {"action":"submitAttendance","sessionToken":"...","qrToken":"..."}
  */
 function doPost(e) {
   try {
@@ -202,6 +232,9 @@ function doPost(e) {
         return handleGetQuestProgress_(request);
       case 'claimquestreward':
         return handleClaimQuestReward_(request);
+      case 'submitattendance':
+      case 'checkinattendance':
+        return handleSubmitAttendance_(request);
       case 'config':
         return jsonSuccess_({ config: getActiveConfig_() });
       case 'levels':
@@ -481,6 +514,126 @@ function handleSubmitActivity_(request) {
   }
 }
 
+/**
+ * Authenticated QR attendance endpoint.
+ *
+ * This deliberately writes only Attendance_Records and TotalXP/level in
+ * User_Stats. It never touches Activities or running totals.
+ */
+function handleSubmitAttendance_(request) {
+  const session = requireSession_(request.sessionToken);
+  const qrToken = String(request.qrToken == null ? '' : request.qrToken).trim();
+  const configurationStatus = getAttendanceFeatureStatus_(getActiveConfig_());
+
+  if (configurationStatus) {
+    return jsonSuccess_({ status: configurationStatus });
+  }
+
+  const lock = LockService.getScriptLock();
+  lock.waitLock(10000);
+
+  try {
+    const participant = findParticipantByNik_(session.nik);
+    if (!participant) {
+      return jsonError_('PARTICIPANT_NOT_FOUND', 'Participant tidak ditemukan.');
+    }
+    if (participant.status !== 'ACTIVE') {
+      return jsonError_('ACCOUNT_INACTIVE', 'Akun ORA tidak aktif. Hubungi admin.');
+    }
+
+    const event = findAttendanceEventByQrToken_(qrToken, getAttendanceEvents_());
+    if (!event) {
+      return jsonSuccess_({ status: 'INVALID_QR' });
+    }
+    const eventStatus = getAttendanceEventEligibilityStatus_(event, new Date());
+    if (eventStatus === 'EVENT_INACTIVE') {
+      return jsonSuccess_(attendanceResponse_(eventStatus, event, null, getAttendanceStats_(participant)));
+    }
+
+    const recordsSheet = getAttendanceRecordsSheet_();
+    const duplicate = findAttendanceRecordByNikAndEventId_(
+      recordsSheet,
+      participant.nik,
+      event.eventId
+    );
+    if (duplicate) {
+      return jsonSuccess_(
+        attendanceResponse_('ALREADY_CHECKED_IN', event, duplicate, getAttendanceStats_(participant))
+      );
+    }
+
+    if (eventStatus !== 'SUCCESS') {
+      return jsonSuccess_(attendanceResponse_(eventStatus, event, null, getAttendanceStats_(participant)));
+    }
+
+    const records = getAttendanceRecordsForNik_(participant.nik);
+    const streakCount = calculateAttendanceStreakForEvent_(
+      getAttendanceEvents_(),
+      records,
+      participant.nik,
+      event
+    );
+    const rewards = getAttendanceRewardRows_();
+    const baseXp = getAttendanceBaseXp_(rewards);
+    const streakBonusXp = getAttendanceStreakBonusXp_(rewards, streakCount);
+    const totalXp = baseXp + streakBonusXp;
+    const record = appendAttendanceRecord_(recordsSheet, {
+      attendanceId: Utilities.getUuid(),
+      eventId: event.eventId,
+      nik: participant.nik,
+      nickname: participant.nickname,
+      checkInAt: new Date(),
+      baseXp: baseXp,
+      streakCount: streakCount,
+      streakBonusXp: streakBonusXp,
+      totalXp: totalXp,
+      status: 'PROCESSING',
+    });
+    let statsWrite = null;
+
+    try {
+      statsWrite = grantAttendanceXp_(participant, totalXp);
+      const savedRecord = markAttendanceRecordSuccess_(recordsSheet, record.rowNumber);
+      return jsonSuccess_(attendanceResponse_('SUCCESS', event, savedRecord, statsWrite.stats));
+    } catch (error) {
+      try {
+        if (statsWrite) restoreUserStatsWrite_(statsWrite);
+      } finally {
+        recordsSheet.deleteRow(record.rowNumber);
+      }
+      throw error;
+    }
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+function attendanceResponse_(status, event, record, stats) {
+  const current = stats || {};
+  return {
+    status: status,
+    eventId: event ? event.eventId : null,
+    eventName: event ? event.eventName : null,
+    checkInAt: record ? toIsoDateTimeOrNull_(record.checkInAt) : null,
+    baseXP: record ? record.baseXp : 0,
+    streakCount: record ? record.streakCount : 0,
+    streakBonusXP: record ? record.streakBonusXp : 0,
+    totalXP: record ? record.totalXp : 0,
+    currentXP: Math.max(0, Number(current.totalXp) || 0),
+    currentLevel: Number(current.currentLevel) || 0,
+  };
+}
+
+function getAttendanceFeatureStatus_(config) {
+  if (!config || config.ATTENDANCE_ENABLED !== true) return 'ATTENDANCE_DISABLED';
+  if (config.ATTENDANCE_QR_ENABLED !== true) return 'ATTENDANCE_QR_DISABLED';
+  return null;
+}
+
+function getAttendanceStats_(participant) {
+  return getUserStatsByNik_(participant.nik) || createDefaultUserStats_(participant);
+}
+
 function handleGetActivityHistory_(request) {
   const session = requireSession_(request.sessionToken);
   const participant = findParticipantByNik_(session.nik);
@@ -719,6 +872,7 @@ function handleGetQuestProgress_(request) {
   const participantRows = getGuildParticipantRows_();
   const activityRows = readSheetObjects_(ORA_SHEETS.ACTIVITIES);
   const activities = mapCompletedActivityRowsForNik_(activityRows, participant.nik);
+  const attendanceRecords = getAttendanceRecordsForNik_(participant.nik);
   const guildContext = buildGuildActivityContext_(participant, participantRows, activityRows);
   const userStats = getUserStatsByNik_(participant.nik);
   const claimsByQuestId = getClaimedQuestsByNik_(participant.nik);
@@ -729,7 +883,8 @@ function handleGetQuestProgress_(request) {
       activities,
       userStats,
       guildContext,
-      questConfig
+      questConfig,
+      attendanceRecords
     );
     return attachQuestClaim_(progress, claimsByQuestId[quest.questId] || null);
   });
@@ -785,13 +940,15 @@ function handleClaimQuestReward_(request) {
     }
 
     const activities = getCompletedActivitiesForNik_(participant.nik);
+    const attendanceRecords = getAttendanceRecordsForNik_(participant.nik);
     const userStats = getUserStatsByNik_(participant.nik);
     const progress = calculateQuestProgress_(
       quest,
       activities,
       userStats,
       null,
-      getActiveConfig_()
+      getActiveConfig_(),
+      attendanceRecords
     );
     if (progress.status === 'UNSUPPORTED_GROUP_SCOPE') {
       return jsonError_(
@@ -852,6 +1009,429 @@ function getActiveConfig_() {
   });
 
   return result;
+}
+
+function getAttendanceEventsSheet_() {
+  return getValidatedSheet_(ORA_SHEETS.ATTENDANCE_EVENTS);
+}
+
+function getAttendanceRecordsSheet_() {
+  return getValidatedSheet_(ORA_SHEETS.ATTENDANCE_RECORDS);
+}
+
+function getAttendanceRewardRows_() {
+  return readSheetObjects_(ORA_SHEETS.ATTENDANCE_REWARDS).map(function (row) {
+    return {
+      rewardType: String(row.RewardType || '').trim().toUpperCase(),
+      milestone: toFiniteNumberOrNull_(row.Milestone),
+      xp: toFiniteNumberOrNull_(row.XP),
+      status: String(row.Status || '').trim().toUpperCase(),
+    };
+  });
+}
+
+function getAttendanceEvents_() {
+  const sheet = getAttendanceEventsSheet_();
+  const range = sheet.getDataRange();
+  const values = range.getValues();
+  const displayValues = range.getDisplayValues();
+  if (values.length < 2) return [];
+
+  const headerMap = createHeaderMap_(displayValues[0]);
+  const timeZone = getOraSpreadsheet_().getSpreadsheetTimeZone();
+  return values.slice(1).map(function (row, index) {
+    return attendanceEventFromRow_(row, displayValues[index + 1], headerMap, index + 2, timeZone);
+  }).filter(function (event) {
+    return !!event.eventId;
+  });
+}
+
+/** Adds the two editor-only QR token actions when this script is sheet-bound. */
+function onOpen() {
+  SpreadsheetApp.getUi()
+    .createMenu('ORA Attendance')
+    .addItem('Generate QR Token', 'generateAttendanceQrTokenForSelectedEvent')
+    .addItem('Regenerate QR Token', 'regenerateAttendanceQrTokenForSelectedEvent')
+    .addToUi();
+}
+
+/**
+ * Admin/editor action. Pass an EventId directly when running from the editor.
+ * An existing token is returned unchanged; use regenerateAttendanceQrToken for
+ * the explicit destructive action.
+ */
+function generateAttendanceQrToken(eventId) {
+  return setAttendanceQrToken_(eventId, false);
+}
+
+/** Admin/editor action that explicitly replaces a selected event's QR token. */
+function regenerateAttendanceQrToken(eventId) {
+  return setAttendanceQrToken_(eventId, true);
+}
+
+function generateAttendanceQrTokenForSelectedEvent() {
+  return runSelectedAttendanceQrAction_(false);
+}
+
+function regenerateAttendanceQrTokenForSelectedEvent() {
+  return runSelectedAttendanceQrAction_(true);
+}
+
+function runSelectedAttendanceQrAction_(regenerate) {
+  const spreadsheet = SpreadsheetApp.getActiveSpreadsheet();
+  const sheet = spreadsheet && spreadsheet.getActiveSheet();
+  const rowNumber = sheet && sheet.getActiveRange() ? sheet.getActiveRange().getRow() : 0;
+  if (!sheet || sheet.getName() !== ORA_SHEETS.ATTENDANCE_EVENTS || rowNumber < 2) {
+    throw new Error('Pilih satu row event pada Attendance_Event_Master terlebih dahulu.');
+  }
+  const headerMap = createHeaderMap_(ORA_HEADERS.Attendance_Event_Master);
+  const eventId = String(sheet.getRange(rowNumber, headerMap.EventId + 1).getValue() || '').trim();
+  const result = setAttendanceQrToken_(eventId, regenerate);
+  SpreadsheetApp.getUi().alert(
+    result.regenerated ? 'QR token diregenerate untuk ' : 'QR token siap untuk ',
+    result.eventId + '\n\nPayload QR:\n' + result.qrToken,
+    SpreadsheetApp.getUi().ButtonSet.OK
+  );
+  return result;
+}
+
+function setAttendanceQrToken_(eventId, regenerate) {
+  const targetEventId = String(eventId || '').trim();
+  if (!targetEventId) throw oraError_('MISSING_EVENT_ID', 'EventId wajib diisi.');
+
+  const lock = LockService.getScriptLock();
+  lock.waitLock(10000);
+  try {
+    const events = getAttendanceEvents_();
+    const event = events.find(function (candidate) {
+      return candidate.eventId === targetEventId;
+    });
+    if (!event) throw oraError_('EVENT_NOT_FOUND', 'Event attendance tidak ditemukan.');
+
+    if (event.qrToken && !regenerate) {
+      return {
+        ok: true,
+        generated: false,
+        regenerated: false,
+        eventId: event.eventId,
+        qrToken: event.qrToken,
+      };
+    }
+
+    const token = newUniqueAttendanceQrToken_(events);
+    const headerMap = createHeaderMap_(ORA_HEADERS.Attendance_Event_Master);
+    const sheet = getAttendanceEventsSheet_();
+    sheet.getRange(event.rowNumber, headerMap.QRToken + 1).setValue(token);
+    sheet.getRange(event.rowNumber, headerMap.UpdatedAt + 1).setValue(new Date());
+    return {
+      ok: true,
+      generated: !event.qrToken,
+      regenerated: !!event.qrToken,
+      eventId: event.eventId,
+      qrToken: token,
+    };
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+function newUniqueAttendanceQrToken_(events) {
+  const existing = {};
+  events.forEach(function (event) {
+    if (event.qrToken) existing[event.qrToken] = true;
+  });
+
+  for (let attempt = 0; attempt < 10; attempt += 1) {
+    const entropy = Utilities.getUuid() + ':' + Utilities.getUuid() + ':' + new Date().getTime();
+    const digest = Utilities.computeDigest(
+      Utilities.DigestAlgorithm.SHA_256,
+      entropy,
+      Utilities.Charset.UTF_8
+    );
+    const token = 'ORAATT-' + Utilities.base64EncodeWebSafe(digest).replace(/=+$/g, '');
+    if (!existing[token]) return token;
+  }
+  throw oraError_('TOKEN_GENERATION_FAILED', 'QR token attendance unik tidak dapat dibuat.');
+}
+
+function attendanceEventFromRow_(row, displayRow, headerMap, rowNumber, timeZone) {
+  return {
+    rowNumber: rowNumber,
+    eventId: String(row[headerMap.EventId] || '').trim(),
+    eventName: String(row[headerMap.EventName] || '').trim(),
+    eventDateKey: attendanceDateKey_(row[headerMap.EventDate], displayRow[headerMap.EventDate], timeZone),
+    startTimeKey: attendanceTimeKey_(row[headerMap.StartTime], displayRow[headerMap.StartTime], timeZone),
+    endTimeKey: attendanceTimeKey_(row[headerMap.EndTime], displayRow[headerMap.EndTime], timeZone),
+    countForStreak: isTrue_(row[headerMap.CountForStreak]),
+    qrToken: String(row[headerMap.QRToken] || '').trim(),
+    status: String(row[headerMap.Status] || '').trim().toUpperCase(),
+    timeZone: timeZone,
+  };
+}
+
+function findAttendanceEventByQrToken_(qrToken, events) {
+  const token = String(qrToken || '').trim();
+  if (!token) return null;
+
+  const matches = events.filter(function (event) {
+    return event.qrToken === token;
+  });
+  if (matches.length > 1) {
+    throw oraError_('CONFIG_ERROR', 'QRToken attendance tidak unik.');
+  }
+  return matches.length === 1 ? matches[0] : null;
+}
+
+function getAttendanceEventScanStatus_(event, now) {
+  const window = attendanceEventWindow_(event);
+  const scanMillis = (now || new Date()).getTime();
+  if (scanMillis < window.startMillis) return 'EVENT_NOT_STARTED';
+  if (scanMillis > window.endMillis) return 'EVENT_CLOSED';
+  return 'SUCCESS';
+}
+
+function getAttendanceEventEligibilityStatus_(event, now) {
+  if (event.status !== 'ACTIVE') return 'EVENT_INACTIVE';
+  return getAttendanceEventScanStatus_(event, now);
+}
+
+function attendanceEventWindow_(event) {
+  if (!event || !event.eventDateKey || !event.startTimeKey || !event.endTimeKey) {
+    throw oraError_('CONFIG_ERROR', 'Tanggal atau waktu event attendance tidak valid.');
+  }
+
+  const startMillis = localDateTimeToMillis_(
+    event.eventDateKey,
+    event.startTimeKey,
+    event.timeZone
+  );
+  let endMillis = localDateTimeToMillis_(
+    event.eventDateKey,
+    event.endTimeKey,
+    event.timeZone
+  );
+  if (endMillis <= startMillis) endMillis += 24 * 60 * 60 * 1000;
+  return { startMillis: startMillis, endMillis: endMillis };
+}
+
+function attendanceDateKey_(value, displayValue, timeZone) {
+  const displayed = String(displayValue || '').trim();
+  if (/^\d{4}-\d{2}-\d{2}$/.test(displayed)) return displayed;
+  const date = toDateOrNull_(value);
+  return date ? Utilities.formatDate(date, timeZone, 'yyyy-MM-dd') : null;
+}
+
+function attendanceTimeKey_(value, displayValue, timeZone) {
+  const displayed = String(displayValue || '').trim();
+  const direct = normalizeAttendanceClock_(displayed);
+  if (direct) return direct;
+
+  const date = toDateOrNull_(value);
+  return date ? Utilities.formatDate(date, timeZone, 'HH:mm:ss') : null;
+}
+
+function normalizeAttendanceClock_(value) {
+  const match = /^(\d{1,2}):(\d{2})(?::(\d{2}))?$/.exec(String(value || '').trim());
+  if (!match) return null;
+  const hours = Number(match[1]);
+  const minutes = Number(match[2]);
+  const seconds = Number(match[3] || 0);
+  if (hours > 23 || minutes > 59 || seconds > 59) return null;
+  return ('0' + hours).slice(-2) + ':' + ('0' + minutes).slice(-2) + ':' + ('0' + seconds).slice(-2);
+}
+
+function localDateTimeToMillis_(dateKey, timeKey, timeZone) {
+  const dateMatch = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(dateKey || ''));
+  const timeMatch = /^(\d{2}):(\d{2}):(\d{2})$/.exec(String(timeKey || ''));
+  if (!dateMatch || !timeMatch) {
+    throw oraError_('CONFIG_ERROR', 'Format tanggal/waktu event attendance tidak valid.');
+  }
+  const utcMillis = Date.UTC(
+    Number(dateMatch[1]),
+    Number(dateMatch[2]) - 1,
+    Number(dateMatch[3]),
+    Number(timeMatch[1]),
+    Number(timeMatch[2]),
+    Number(timeMatch[3])
+  );
+  const offsetText = Utilities.formatDate(new Date(utcMillis), timeZone, 'Z');
+  const offsetMatch = /^([+-])(\d{2})(\d{2})$/.exec(offsetText);
+  if (!offsetMatch) throw oraError_('CONFIG_ERROR', 'Timezone spreadsheet tidak valid.');
+  const offsetMinutes = (Number(offsetMatch[2]) * 60) + Number(offsetMatch[3]);
+  return utcMillis + (offsetMatch[1] === '+' ? -1 : 1) * offsetMinutes * 60000;
+}
+
+function getAttendanceRecordsForNik_(nik) {
+  const sheet = getAttendanceRecordsSheet_();
+  const values = sheet.getDataRange().getValues();
+  const displayValues = sheet.getDataRange().getDisplayValues();
+  if (values.length < 2) return [];
+
+  const headerMap = createHeaderMap_(displayValues[0]);
+  const targetNik = normalizeDigits_(nik);
+  return values.slice(1).map(function (row, index) {
+    return attendanceRecordFromRow_(row, headerMap, index + 2);
+  }).filter(function (record) {
+    return record.nik === targetNik;
+  });
+}
+
+function findAttendanceRecordByNikAndEventId_(sheet, nik, eventId) {
+  const values = sheet.getDataRange().getValues();
+  const displayValues = sheet.getDataRange().getDisplayValues();
+  if (values.length < 2) return null;
+
+  const headerMap = createHeaderMap_(displayValues[0]);
+  const records = values.slice(1).map(function (row, index) {
+    return attendanceRecordFromRow_(row, headerMap, index + 2);
+  });
+  return findAttendanceRecordInRecords_(records, nik, eventId);
+}
+
+function findAttendanceRecordInRecords_(records, nik, eventId) {
+  const targetNik = normalizeDigits_(nik);
+  const targetEventId = String(eventId || '').trim();
+  return records.find(function (record) {
+    return record.nik === targetNik && record.eventId === targetEventId;
+  }) || null;
+}
+
+function attendanceRecordFromRow_(row, headerMap, rowNumber) {
+  return {
+    rowNumber: rowNumber,
+    attendanceId: String(row[headerMap.AttendanceId] || '').trim(),
+    eventId: String(row[headerMap.EventId] || '').trim(),
+    nik: normalizeDigits_(row[headerMap.NIK]),
+    nickname: String(row[headerMap.Nickname] || '').trim(),
+    checkInAt: row[headerMap.CheckInAt] || null,
+    baseXp: Math.max(0, Math.round(Number(row[headerMap.BaseXP]) || 0)),
+    streakCount: Math.max(0, Math.round(Number(row[headerMap.StreakCount]) || 0)),
+    streakBonusXp: Math.max(0, Math.round(Number(row[headerMap.StreakBonusXP]) || 0)),
+    totalXp: Math.max(0, Math.round(Number(row[headerMap.TotalXP]) || 0)),
+    status: String(row[headerMap.Status] || '').trim().toUpperCase(),
+    createdAt: row[headerMap.CreatedAt] || null,
+  };
+}
+
+function appendAttendanceRecord_(sheet, record) {
+  const now = new Date();
+  const rowNumber = sheet.getLastRow() + 1;
+  const values = [[
+    String(record.attendanceId),
+    String(record.eventId),
+    String(record.nik),
+    String(record.nickname || ''),
+    record.checkInAt || now,
+    Number(record.baseXp),
+    Number(record.streakCount),
+    Number(record.streakBonusXp),
+    Number(record.totalXp),
+    String(record.status || 'PROCESSING'),
+    now,
+  ]];
+  sheet.getRange(rowNumber, 1, 1, 3).setNumberFormat('@');
+  sheet.getRange(rowNumber, 1, 1, ORA_HEADERS.Attendance_Records.length).setValues(values);
+  return attendanceRecordFromRow_(values[0], createHeaderMap_(ORA_HEADERS.Attendance_Records), rowNumber);
+}
+
+function markAttendanceRecordSuccess_(sheet, rowNumber) {
+  const headerMap = createHeaderMap_(ORA_HEADERS.Attendance_Records);
+  sheet.getRange(rowNumber, headerMap.Status + 1).setValue('SUCCESS');
+  const row = sheet.getRange(rowNumber, 1, 1, ORA_HEADERS.Attendance_Records.length).getValues()[0];
+  return attendanceRecordFromRow_(row, headerMap, rowNumber);
+}
+
+function getAttendanceBaseXp_(rewards) {
+  const candidates = rewards.filter(function (reward) {
+    return reward.status === 'ACTIVE' && reward.rewardType === 'BASE' && reward.milestone === 1;
+  });
+  if (candidates.length !== 1) {
+    throw oraError_('CONFIG_ERROR', 'Base XP attendance aktif untuk milestone 1 harus tepat satu.');
+  }
+  return validateAttendanceRewardXp_(candidates[0].xp, 'Base XP attendance');
+}
+
+function getAttendanceStreakBonusXp_(rewards, streakCount) {
+  const activeStreakRewards = rewards.filter(function (reward) {
+    return reward.status === 'ACTIVE' && reward.rewardType === 'STREAK';
+  });
+  activeStreakRewards.forEach(function (reward) {
+    if (!Number.isInteger(reward.milestone) || reward.milestone < 1) {
+      throw oraError_('CONFIG_ERROR', 'Milestone reward streak attendance tidak valid.');
+    }
+    validateAttendanceRewardXp_(reward.xp, 'XP reward streak attendance');
+  });
+  const matches = activeStreakRewards.filter(function (reward) {
+    return reward.milestone === streakCount;
+  });
+  if (matches.length > 1) {
+    throw oraError_('CONFIG_ERROR', 'Milestone reward streak attendance duplikat.');
+  }
+  return matches.length === 1 ? validateAttendanceRewardXp_(matches[0].xp, 'XP reward streak attendance') : 0;
+}
+
+function validateAttendanceRewardXp_(xp, label) {
+  if (!Number.isFinite(xp) || xp < 0 || Math.floor(xp) !== xp) {
+    throw oraError_('CONFIG_ERROR', label + ' tidak valid.');
+  }
+  return xp;
+}
+
+function calculateAttendanceStreakForEvent_(events, records, nik, targetEvent) {
+  const ordered = events.filter(function (event) {
+    return event.countForStreak === true && event.status === 'ACTIVE';
+  }).sort(compareAttendanceEvents_);
+  const targetIndex = ordered.findIndex(function (event) {
+    return event.eventId === targetEvent.eventId;
+  });
+
+  if (targetEvent.countForStreak && targetIndex < 0) {
+    throw oraError_('CONFIG_ERROR', 'Event streak attendance tidak memiliki urutan yang valid.');
+  }
+
+  const completedEventIds = {};
+  records.forEach(function (record) {
+    if (record.nik === normalizeDigits_(nik) && record.status === 'SUCCESS') {
+      completedEventIds[record.eventId] = true;
+    }
+  });
+
+  if (!targetEvent.countForStreak) {
+    const preceding = ordered.filter(function (event) {
+      return compareAttendanceEvents_(event, targetEvent) < 0;
+    });
+    if (preceding.length === 0 || !completedEventIds[preceding[preceding.length - 1].eventId]) return 0;
+    return countConsecutiveAttendanceEvents_(preceding, completedEventIds, preceding.length - 1);
+  }
+
+  return 1 + countConsecutiveAttendanceEvents_(ordered, completedEventIds, targetIndex - 1);
+}
+
+function countConsecutiveAttendanceEvents_(orderedEvents, completedEventIds, startIndex) {
+  let count = 0;
+  for (let index = startIndex; index >= 0; index -= 1) {
+    if (!completedEventIds[orderedEvents[index].eventId]) break;
+    count += 1;
+  }
+  return count;
+}
+
+function compareAttendanceEvents_(left, right) {
+  const leftKey = attendanceEventOrderKey_(left);
+  const rightKey = attendanceEventOrderKey_(right);
+  return leftKey < rightKey ? -1 : (leftKey > rightKey ? 1 : 0);
+}
+
+function attendanceEventOrderKey_(event) {
+  if (!event.eventDateKey) {
+    throw oraError_('CONFIG_ERROR', 'EventDate attendance tidak valid.');
+  }
+  return event.eventDateKey + 'T' + (event.startTimeKey || '00:00:00') + '|' + event.eventId;
+}
+
+function grantAttendanceXp_(participant, totalXp) {
+  // Reuse the single existing User_Stats/level writer. It changes only XP/level.
+  return grantQuestRewardXp_(participant, totalXp);
 }
 
 function getActiveLevels_() {
@@ -958,7 +1538,14 @@ function buildGuildActivityContext_(owner, participants, activityRows) {
   };
 }
 
-function calculateQuestProgress_(quest, allActivities, userStats, guildContext, config) {
+function calculateQuestProgress_(
+  quest,
+  allActivities,
+  userStats,
+  guildContext,
+  config,
+  attendanceRecords
+) {
   const normalizedType = normalizeQuestType_(quest.questType);
   const supportedType = mapQuestType_(normalizedType);
   const sourceActivities = supportedType === 'GUILD_DISTANCE'
@@ -966,6 +1553,9 @@ function calculateQuestProgress_(quest, allActivities, userStats, guildContext, 
     : allActivities;
   const activities = sourceActivities.filter(function (activity) {
     return isActivityWithinQuestPeriod_(activity, quest);
+  });
+  const successfulAttendance = (attendanceRecords || []).filter(function (record) {
+    return record.status === 'SUCCESS' && isAttendanceWithinQuestPeriod_(record, quest);
   });
   let progress = 0;
 
@@ -1009,6 +1599,12 @@ function calculateQuestProgress_(quest, allActivities, userStats, guildContext, 
       progress = activities.reduce(function (total, activity) {
         return total + activity.distanceKm;
       }, 0);
+      break;
+    case 'ATTENDANCE':
+      progress = calculateAttendanceQuestProgress_(quest, successfulAttendance);
+      if (progress === null) {
+        return publicQuestProgress_(quest, 0, 'UNKNOWN_TYPE', false, 0);
+      }
       break;
     default:
       return publicQuestProgress_(quest, 0, 'UNKNOWN_TYPE', false, 0);
@@ -1074,6 +1670,37 @@ function calculateQuestXpProgress_(quest, activities, userStats) {
   }, 0);
 }
 
+function calculateAttendanceQuestProgress_(quest, records) {
+  const mode = normalizeQuestType_(quest.unit);
+  if (mode === 'COUNT') return countUniqueSuccessfulAttendanceEvents_(records);
+  if (mode === 'STREAK') return latestAttendanceStreakCount_(records);
+  return null;
+}
+
+function countUniqueSuccessfulAttendanceEvents_(records) {
+  const eventIds = {};
+  records.forEach(function (record) {
+    const eventId = String(record.eventId || '').trim();
+    if (eventId) eventIds[eventId] = true;
+  });
+  return Object.keys(eventIds).length;
+}
+
+function latestAttendanceStreakCount_(records) {
+  let latest = null;
+  records.forEach(function (record) {
+    const checkInAt = toDateOrNull_(record.checkInAt);
+    if (!checkInAt) return;
+    if (!latest || checkInAt.getTime() > latest.checkInAt.getTime()) {
+      latest = {
+        checkInAt: checkInAt,
+        streakCount: Math.max(0, Math.round(Number(record.streakCount) || 0)),
+      };
+    }
+  });
+  return latest ? latest.streakCount : 0;
+}
+
 function calculateLongestActivityStreak_(activities) {
   const uniqueDates = {};
   activities.forEach(function (activity) {
@@ -1114,6 +1741,15 @@ function isActivityWithinQuestPeriod_(activity, quest) {
   return true;
 }
 
+function isAttendanceWithinQuestPeriod_(record, quest) {
+  const checkInAt = toDateOrNull_(record.checkInAt);
+  const dateKey = toLocalDateKeyOrNull_(checkInAt);
+  if (!dateKey) return false;
+  if (quest.startDate && dateKey < quest.startDate) return false;
+  if (quest.endDate && dateKey > quest.endDate) return false;
+  return true;
+}
+
 function mapQuestType_(type) {
   const aliases = {
     DISTANCE: 'DISTANCE',
@@ -1146,6 +1782,7 @@ function mapQuestType_(type) {
     RUN_STREAK: 'STREAK',
     DAILY_STREAK: 'STREAK',
     CONSECUTIVE_DAYS: 'STREAK',
+    ATTENDANCE: 'ATTENDANCE',
   };
   return aliases[type] || null;
 }
@@ -1622,21 +2259,7 @@ function grantQuestRewardXp_(participant, rewardXp) {
   const totalXp = Math.round(stats.totalXp + Math.max(0, Number(rewardXp) || 0));
   const level = getLevelByXp_(totalXp);
   const now = new Date();
-  const updated = {
-    nik: participant.nik,
-    nickname: stats.nickname || participant.nickname || '',
-    division: stats.division || participant.divisionGuild || '',
-    totalActivities: stats.totalActivities || 0,
-    totalDistanceKm: stats.totalDistanceKm || 0,
-    totalDurationSec: stats.totalDurationSec || 0,
-    totalXp: totalXp,
-    currentLevel: level.currentLevel,
-    currentLevelName: level.currentLevelName,
-    nextLevelXp: level.nextLevelXp,
-    lastActivityId: stats.lastActivityId || '',
-    lastActivityAt: stats.lastActivityAt || '',
-    updatedAt: now,
-  };
+  const updated = buildXpOnlyUserStats_(participant, stats, totalXp, level, now);
   const values = [[
     String(updated.nik),
     String(updated.nickname),
@@ -1660,6 +2283,24 @@ function grantQuestRewardXp_(participant, rewardXp) {
     targetRow: targetRow,
     previousValues: previousValues,
     stats: updated,
+  };
+}
+
+function buildXpOnlyUserStats_(participant, stats, totalXp, level, updatedAt) {
+  return {
+    nik: participant.nik,
+    nickname: stats.nickname || participant.nickname || '',
+    division: stats.division || participant.divisionGuild || '',
+    totalActivities: stats.totalActivities || 0,
+    totalDistanceKm: stats.totalDistanceKm || 0,
+    totalDurationSec: stats.totalDurationSec || 0,
+    totalXp: totalXp,
+    currentLevel: level.currentLevel,
+    currentLevelName: level.currentLevelName,
+    nextLevelXp: level.nextLevelXp,
+    lastActivityId: stats.lastActivityId || '',
+    lastActivityAt: stats.lastActivityAt || '',
+    updatedAt: updatedAt,
   };
 }
 
@@ -2422,6 +3063,9 @@ function setupBackend1() {
     userStats: readSheetObjects_(ORA_SHEETS.USER_STATS).length,
     questClaims: readSheetObjects_(ORA_SHEETS.QUEST_CLAIMS).length,
     guildMasters: readSheetObjects_(ORA_SHEETS.GUILD_MASTER).length,
+    attendanceEvents: readSheetObjects_(ORA_SHEETS.ATTENDANCE_EVENTS).length,
+    attendanceRecords: readSheetObjects_(ORA_SHEETS.ATTENDANCE_RECORDS).length,
+    attendanceRewards: readSheetObjects_(ORA_SHEETS.ATTENDANCE_REWARDS).length,
     activeConfigKeys: Object.keys(getActiveConfig_()).length,
     activeLevels: getActiveLevels_().length,
     activeQuestsToday: getActiveQuests_().length,
@@ -3317,6 +3961,7 @@ function testGetQuestProgress() {
   });
 
   const mappingTests = testQuestProgressTypeMappings();
+  const attendanceTests = testAttendanceQuestProgress();
 
   const summary = {
     ok: true,
@@ -3331,10 +3976,12 @@ function testGetQuestProgress() {
       'XP',
       'STREAK',
       'GUILD_DISTANCE',
+      'ATTENDANCE',
     ],
     guildRewardClaimBlocked: true,
     unknownTypeSafe: true,
     mappingTests: mappingTests,
+    attendanceTests: attendanceTests,
     quests: response.quests,
   };
   console.log(JSON.stringify(summary, null, 2));
@@ -3497,6 +4144,100 @@ function testQuestProgressTypeMappings() {
     unknownTypeSafe: true,
     ownerIsolation: true,
     periodFiltering: true,
+  };
+}
+
+/**
+ * Pure regression coverage for ATTENDANCE quests. The fixtures model final
+ * audit rows after the attendance endpoint has already assigned StreakCount.
+ * Quest progress reads that value; it never calculates a separate streak.
+ */
+function testAttendanceQuestProgress() {
+  const baseQuest = {
+    questId: 'ATTENDANCE-TEST',
+    questName: 'Attendance Test',
+    questType: 'ATTENDANCE',
+    targetValue: 3,
+    unit: 'COUNT',
+    rewardXp: 100,
+    periodType: 'WEEKLY',
+    startDate: '2026-08-10',
+    endDate: '2026-08-16',
+  };
+  const record = function (eventId, checkInAt, streakCount, status) {
+    return {
+      eventId: eventId,
+      checkInAt: checkInAt,
+      streakCount: streakCount,
+      status: status || 'SUCCESS',
+    };
+  };
+  const first = [record('E-1', '2026-08-10T06:00:00Z', 1)];
+  const countTarget = [
+    record('E-1', '2026-08-10T06:00:00Z', 1),
+    record('E-2', '2026-08-11T06:00:00Z', 2),
+    record('E-2', '2026-08-11T06:01:00Z', 2),
+    record('E-NON-STREAK', '2026-08-12T06:00:00Z', 2),
+    record('E-PROCESSING', '2026-08-13T06:00:00Z', 3, 'PROCESSING'),
+  ];
+  const streakTarget = [
+    record('E-1', '2026-08-10T06:00:00Z', 1),
+    record('E-2', '2026-08-11T06:00:00Z', 2),
+    record('E-3', '2026-08-12T06:00:00Z', 3),
+  ];
+  const missedOfficialEvent = [
+    record('E-1', '2026-08-10T06:00:00Z', 1),
+    record('E-2', '2026-08-11T06:00:00Z', 2),
+    record('E-4', '2026-08-13T06:00:00Z', 1),
+  ];
+
+  const countZero = calculateQuestProgress_(baseQuest, [], null, null, null, []);
+  const countOne = calculateQuestProgress_(baseQuest, [], null, null, null, first);
+  const countComplete = calculateQuestProgress_(baseQuest, [], null, null, null, countTarget);
+  const streakQuest = Object.assign({}, baseQuest, { unit: 'STREAK' });
+  const streakOne = calculateQuestProgress_(streakQuest, [], null, null, null, first);
+  const streakComplete = calculateQuestProgress_(streakQuest, [], null, null, null, streakTarget);
+  const streakAfterNonStreak = calculateQuestProgress_(streakQuest, [], null, null, null, countTarget);
+  const streakReset = calculateQuestProgress_(streakQuest, [], null, null, null, missedOfficialEvent);
+  const runningQuest = calculateQuestProgress_(
+    Object.assign({}, baseQuest, { questType: 'DISTANCE', unit: 'KM', targetValue: 5 }),
+    [{ activityDateKey: '2026-08-10', distanceKm: 5, durationSec: 60 }],
+    null,
+    null,
+    null,
+    countTarget
+  );
+  const claimed = attachQuestClaim_(countComplete, {
+    claimId: 'ATTENDANCE-CLAIM',
+    claimedAt: new Date('2026-08-12T07:00:00Z'),
+  });
+  const baseXp = 20;
+  const streakBonusXp = 30;
+  const questRewardXp = baseQuest.rewardXp;
+
+  assertBackendTest_(countZero.progress === 0 && countZero.status === 'NOT_STARTED', 'Attendance COUNT harus mulai dari 0.');
+  assertBackendTest_(countOne.progress === 1 && countOne.status === 'IN_PROGRESS', 'Attendance COUNT harus bertambah per attendance sukses.');
+  assertBackendTest_(countComplete.progress === 3 && countComplete.completed, 'Duplicate tidak boleh menambah COUNT dan non-streak event harus dihitung.');
+  assertBackendTest_(streakOne.progress === 1 && streakOne.status === 'IN_PROGRESS', 'Attendance STREAK harus memakai StreakCount pertama.');
+  assertBackendTest_(streakComplete.progress === 3 && streakComplete.completed, 'Attendance STREAK harus CLAIMABLE pada target.');
+  assertBackendTest_(streakAfterNonStreak.progress === 2, 'Event non-streak harus mempertahankan StreakCount backend.');
+  assertBackendTest_(streakReset.progress === 1, 'Missed official streak event harus mengikuti reset StreakCount backend.');
+  assertBackendTest_(claimed.claimed === true && claimed.claimId === 'ATTENDANCE-CLAIM', 'Attendance quest claimed harus memakai mekanisme claim existing.');
+  assertBackendTest_(runningQuest.progress === 5 && runningQuest.completed, 'Attendance tidak boleh mengubah progress quest running.');
+  assertBackendTest_(baseXp + streakBonusXp + questRewardXp === 150, 'XP attendance dan quest reward harus tetap terpisah.');
+
+  return {
+    ok: true,
+    countZeroToTarget: true,
+    streakOneToTarget: true,
+    missedEventReset: true,
+    nonStreakCounts: true,
+    nonStreakDoesNotBreak: true,
+    duplicateSafe: true,
+    claimable: true,
+    claimed: true,
+    runningQuestUnchanged: true,
+    combinedXp: true,
   };
 }
 
@@ -3689,6 +4430,133 @@ function assertUserStatsTotalsEqual_(expected, actual, message) {
     expected.nextLevelXp === actual.nextLevelXp &&
     expected.lastActivityId === actual.lastActivityId;
   assertBackendTest_(equal, message);
+}
+
+/**
+ * Pure/editor-safe coverage for the Attendance rules. It does not write to
+ * sheets, alter XP, or require a real session. Run this after deployment.
+ */
+function testAttendanceFoundation() {
+  const timeZone = Session.getScriptTimeZone();
+  const event1 = attendanceTestEvent_('E-1', '2026-08-20', '08:00:00', true, 'ACTIVE', 'QR-ONE', timeZone);
+  const event2 = attendanceTestEvent_('E-2', '2026-08-21', '08:00:00', true, 'ACTIVE', 'QR-TWO', timeZone);
+  const event3 = attendanceTestEvent_('E-3', '2026-08-22', '08:00:00', true, 'ACTIVE', 'QR-THREE', timeZone);
+  const nonStreak = attendanceTestEvent_('E-NON', '2026-08-20', '12:00:00', false, 'ACTIVE', 'QR-NON', timeZone);
+  const inactive = attendanceTestEvent_('E-OFF', '2026-08-23', '08:00:00', true, 'INACTIVE', 'QR-OFF', timeZone);
+  const events = [event3, nonStreak, event1, event2, inactive];
+  const nik = 'TEST-ATTENDANCE';
+  const rewards = [
+    { rewardType: 'BASE', milestone: 1, xp: 20, status: 'ACTIVE' },
+    { rewardType: 'STREAK', milestone: 3, xp: 30, status: 'ACTIVE' },
+    { rewardType: 'STREAK', milestone: 5, xp: 50, status: 'ACTIVE' },
+  ];
+  const start = localDateTimeToMillis_('2026-08-20', '08:00:00', timeZone);
+  const end = localDateTimeToMillis_('2026-08-20', '10:00:00', timeZone);
+
+  const tokens = {};
+  for (let index = 0; index < 20; index += 1) {
+    const token = newUniqueAttendanceQrToken_([{ qrToken: 'EXISTING-' + index }]);
+    assertBackendTest_(!tokens[token] && token.indexOf('ORAATT-') === 0, 'QR token harus unik dan sulit ditebak.');
+    tokens[token] = true;
+  }
+  assertBackendTest_(findAttendanceEventByQrToken_('UNKNOWN', events) === null, 'QR tidak valid harus aman.');
+  assertBackendTest_(findAttendanceEventByQrToken_('QR-TWO', events).eventId === 'E-2', 'QR valid harus menemukan event.');
+  assertBackendTest_(getAttendanceEventEligibilityStatus_(inactive, new Date(start)) === 'EVENT_INACTIVE', 'Event inactive harus ditolak.');
+
+  assertBackendTest_(getAttendanceEventScanStatus_(event1, new Date(start + 60000)) === 'SUCCESS', 'Event aktif dalam waktu scan harus valid.');
+  assertBackendTest_(getAttendanceEventScanStatus_(event1, new Date(start - 1)) === 'EVENT_NOT_STARTED', 'Scan sebelum waktu event harus ditolak.');
+  assertBackendTest_(getAttendanceEventScanStatus_(event1, new Date(end + 1)) === 'EVENT_CLOSED', 'Scan setelah waktu event harus ditolak.');
+  assertBackendTest_(getAttendanceFeatureStatus_({ ATTENDANCE_ENABLED: false, ATTENDANCE_QR_ENABLED: true }) === 'ATTENDANCE_DISABLED', 'Config attendance disabled harus dihormati.');
+  assertBackendTest_(getAttendanceFeatureStatus_({ ATTENDANCE_ENABLED: true, ATTENDANCE_QR_ENABLED: false }) === 'ATTENDANCE_QR_DISABLED', 'Config QR attendance disabled harus dihormati.');
+
+  assertBackendTest_(getAttendanceBaseXp_(rewards) === 20, 'Base XP harus dibaca dari reward master.');
+  assertAttendanceConfigError_(function () {
+    getAttendanceBaseXp_([]);
+  }, 'Base XP missing harus menghasilkan CONFIG_ERROR.');
+
+  const record1 = attendanceTestRecord_(nik, 'E-1');
+  const record2 = attendanceTestRecord_(nik, 'E-2');
+  assertBackendTest_(calculateAttendanceStreakForEvent_(events, [], nik, event1) === 1, 'Attendance pertama harus streak 1.');
+  assertBackendTest_(calculateAttendanceStreakForEvent_(events, [record1], nik, event2) === 2, 'Attendance berurutan kedua harus streak 2.');
+  assertBackendTest_(calculateAttendanceStreakForEvent_(events, [record1, record2], nik, event3) === 3, 'Attendance berurutan ketiga harus streak 3.');
+  assertBackendTest_(calculateAttendanceStreakForEvent_(events, [record1], nik, event3) === 1, 'Melewatkan event streak harus reset ke 1.');
+  assertBackendTest_(calculateAttendanceStreakForEvent_(events, [record1], nik, event2) === 2, 'Event CountForStreak FALSE tidak boleh memutus streak.');
+  assertBackendTest_(calculateAttendanceStreakForEvent_(events, [record1], nik, nonStreak) === 1, 'Event CountForStreak FALSE tidak boleh menambah streak.');
+
+  assertBackendTest_(getAttendanceStreakBonusXp_(rewards, 3) === 30, 'Milestone streak 3 harus memberi bonus.');
+  assertBackendTest_(getAttendanceStreakBonusXp_(rewards, 4) === 0, 'Streak 4 tidak boleh memberi bonus ulang.');
+  assertBackendTest_(getAttendanceStreakBonusXp_(rewards, 5) === 50, 'Milestone streak 5 harus memberi bonus.');
+  assertBackendTest_(getAttendanceBaseXp_(rewards) + getAttendanceStreakBonusXp_(rewards, 3) === 50, 'Total XP attendance harus base plus bonus.');
+  assertBackendTest_(findAttendanceRecordInRecords_([record1], nik, 'E-1') === record1, 'Duplicate attendance harus terdeteksi sebelum grant XP kedua.');
+  const beforeStats = {
+    nickname: 'ATTEND', division: 'OPS', totalActivities: 7, totalDistanceKm: 42.5,
+    totalDurationSec: 3600, totalXp: 100, lastActivityId: 'RUN-7', lastActivityAt: '2026-08-20T07:00:00+07:00',
+  };
+  const afterXpGrant = buildXpOnlyUserStats_(
+    { nik: nik, nickname: 'ATTEND', divisionGuild: 'OPS' },
+    beforeStats,
+    150,
+    { currentLevel: 2, currentLevelName: 'SCOUT', nextLevelXp: 200 },
+    new Date()
+  );
+  assertBackendTest_(
+    afterXpGrant.totalActivities === beforeStats.totalActivities &&
+      afterXpGrant.totalDistanceKm === beforeStats.totalDistanceKm &&
+      afterXpGrant.totalDurationSec === beforeStats.totalDurationSec &&
+      afterXpGrant.lastActivityId === beforeStats.lastActivityId &&
+      afterXpGrant.totalXp === 150,
+    'Attendance XP tidak boleh mengubah statistik running.'
+  );
+
+  return {
+    ok: true,
+    tokenUnique: true,
+    validAndInvalidQr: true,
+    inactiveEvent: true,
+    eventWindow: true,
+    attendanceConfig: true,
+    rewardMasterOnly: true,
+    streakOneTwoThree: true,
+    missedEventReset: true,
+    nonStreakDoesNotBreak: true,
+    milestoneThree: true,
+    milestoneFourNoRepeat: true,
+    milestoneFive: true,
+    duplicateSafe: true,
+    xpOnlyAttendanceWriter: true,
+  };
+}
+
+function attendanceTestEvent_(eventId, dateKey, startTimeKey, countForStreak, status, qrToken, timeZone) {
+  return {
+    eventId: eventId,
+    eventName: eventId,
+    eventDateKey: dateKey,
+    startTimeKey: startTimeKey,
+    endTimeKey: '10:00:00',
+    countForStreak: countForStreak,
+    status: status,
+    qrToken: qrToken,
+    timeZone: timeZone,
+  };
+}
+
+function attendanceTestRecord_(nik, eventId) {
+  return {
+    nik: nik,
+    eventId: eventId,
+    status: 'SUCCESS',
+  };
+}
+
+function assertAttendanceConfigError_(callback, message) {
+  let raised = false;
+  try {
+    callback();
+  } catch (error) {
+    raised = error && error.oraCode === 'CONFIG_ERROR';
+  }
+  assertBackendTest_(raised, message);
 }
 
 function assertBackendTest_(condition, message) {

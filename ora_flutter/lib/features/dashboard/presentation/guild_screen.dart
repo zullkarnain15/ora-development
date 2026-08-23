@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 
 import '../../../core/theme/ora_theme.dart';
+import '../../mascot/awan_mascot_slot.dart';
+import '../../mascot/awan_mascot_state.dart';
 import '../../../shared/widgets/ora_widgets.dart';
 import '../application/feature_controller.dart';
 import '../domain/feature_models.dart';
@@ -33,10 +35,22 @@ class _GuildScreenState extends State<GuildScreen> {
         child: ListView(
           padding: const EdgeInsets.all(16),
           children: [
-            const OraScreenTitle(
-              title: 'GUILD HALL',
-              subtitle: 'RUNNERS, RANKS, AND GUILD DIRECTORY',
-              assetName: 'guild.png',
+            const Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Expanded(
+                  child: OraScreenTitle(
+                    title: 'GUILD HALL',
+                    subtitle: 'RUNNERS, RANKS, AND GUILD DIRECTORY',
+                    assetName: 'guild.png',
+                  ),
+                ),
+                AwanMascotSlot(
+                  state: AwanMascotState.cheer,
+                  minSize: 34,
+                  maxSize: 45,
+                ),
+              ],
             ),
             const SizedBox(height: 14),
             SegmentedButton<GuildView>(

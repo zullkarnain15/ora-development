@@ -30,6 +30,7 @@ class _FakeFeatureApi implements OraFeatureApi {
   List<Quest> publicQuests = const [];
   List<Quest> progressQuests = const [];
   BackendFailure? progressFailure;
+  int progressCalls = 0;
   GuildData guild = const GuildData(
     status: 'UNASSIGNED',
     guild: null,
@@ -51,6 +52,19 @@ class _FakeFeatureApi implements OraFeatureApi {
   );
   Completer<QuestClaim>? claimCompleter;
   int claimCalls = 0;
+  AttendanceResult attendance = const AttendanceResult(
+    status: AttendanceStatus.success,
+    rawStatus: 'SUCCESS',
+    baseXp: 20,
+    streakCount: 1,
+    streakBonusXp: 0,
+    totalXp: 20,
+    currentXp: 20,
+    currentLevel: 1,
+  );
+  Completer<AttendanceResult>? attendanceCompleter;
+  BackendFailure? attendanceFailure;
+  int attendanceCalls = 0;
   int statsCalls = 0;
   LeaderboardScope? requestedScope;
   LeaderboardMetric? requestedMetric;
@@ -91,6 +105,7 @@ class _FakeFeatureApi implements OraFeatureApi {
 
   @override
   Future<List<Quest>> questProgress(String sessionToken) async {
+    progressCalls++;
     if (progressFailure case final error?) throw error;
     return progressQuests;
   }
@@ -99,6 +114,16 @@ class _FakeFeatureApi implements OraFeatureApi {
   Future<QuestClaim> claimQuest(String sessionToken, String questId) async {
     claimCalls++;
     return claimCompleter == null ? claim : claimCompleter!.future;
+  }
+
+  @override
+  Future<AttendanceResult> submitAttendance(
+    String sessionToken,
+    String qrToken,
+  ) async {
+    attendanceCalls++;
+    if (attendanceFailure case final error?) throw error;
+    return attendanceCompleter?.future ?? attendance;
   }
 
   @override
@@ -503,7 +528,42 @@ void main() {
     await Future.wait([first, second]);
     expect(controller.quests.single.claimed, isTrue);
     expect(api.statsCalls, 1);
+    expect(api.progressCalls, 1);
     expect(controller.claimMessage, '+10 XP CLAIMED');
+  });
+
+  test('attendance submission is single-flight and refreshes server data only on success', () async {
+    final completer = Completer<AttendanceResult>();
+    final api = _FakeFeatureApi()..attendanceCompleter = completer;
+    final controller = _controller(api);
+
+    final first = controller.submitAttendance('QR-1');
+    final second = controller.submitAttendance('QR-1');
+    expect(api.attendanceCalls, 1);
+    completer.complete(api.attendance);
+
+    final results = await Future.wait([first, second]);
+    expect(
+      results.map((result) => result.status),
+      everyElement(AttendanceStatus.success),
+    );
+    expect(api.statsCalls, 1);
+
+    api.attendance = const AttendanceResult(
+      status: AttendanceStatus.alreadyCheckedIn,
+      rawStatus: 'ALREADY_CHECKED_IN',
+      baseXp: 0,
+      streakCount: 0,
+      streakBonusXp: 0,
+      totalXp: 0,
+      currentXp: 20,
+      currentLevel: 1,
+    );
+    api.attendanceCompleter = null;
+    await controller.submitAttendance('QR-1');
+    expect(api.attendanceCalls, 2);
+    expect(api.statsCalls, 1);
+    expect(api.progressCalls, 1);
   });
 
   test('blocked claim never reaches backend', () async {

@@ -544,6 +544,36 @@ class TrackingController extends ChangeNotifier with WidgetsBindingObserver {
 
   Future<void> discardRecovered() => _enqueueCommand(_discardRecovered);
 
+  Future<void> discardActive() => _enqueueCommand(_discardActive);
+
+  Future<void> _discardActive() async {
+    final current = session;
+    if (current == null ||
+        (status != TrackingStatus.running && status != TrackingStatus.paused)) {
+      return;
+    }
+    try {
+      await nativeAdapter.stop(current.sessionId);
+    } on Object {
+      // The local discard remains authoritative if the native service is gone.
+    }
+    await store.discardRun(current.sessionId, user.nik);
+    session = null;
+    finalActivity = null;
+    status = TrackingStatus.idle;
+    distanceMeters = 0;
+    activeDurationMillis = 0;
+    sessionElapsedMillis = 0;
+    averagePace = null;
+    finalReconciliation = null;
+    fieldDiagnostics = null;
+    message = 'ADVENTURE DISCARDED';
+    isWarning = false;
+    _locationEngine.stop();
+    _safeNotify();
+    await _refreshNativeStatusOnly();
+  }
+
   Future<void> _discardRecovered() async {
     final current = session;
     if (current == null || status != TrackingStatus.recoverableSession) return;

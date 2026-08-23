@@ -1,63 +1,124 @@
 import 'package:flutter/material.dart';
 
 import '../../../core/theme/ora_theme.dart';
+import '../../mascot/awan_mascot_controller.dart';
+import '../../mascot/awan_mascot_slot.dart';
+import '../../mascot/awan_mascot_state.dart';
 import '../../../shared/widgets/ora_widgets.dart';
 import '../application/feature_controller.dart';
 import '../domain/feature_models.dart';
 import 'formatters.dart';
 
-class QuestScreen extends StatelessWidget {
+class QuestScreen extends StatefulWidget {
   const QuestScreen({super.key, required this.controller});
   final FeatureController controller;
 
   @override
+  State<QuestScreen> createState() => _QuestScreenState();
+}
+
+class _QuestScreenState extends State<QuestScreen> {
+  late final AwanMascotController _awanController;
+  String? _lastClaimEvent;
+
+  @override
+  void initState() {
+    super.initState();
+    _awanController = AwanMascotController();
+    _lastClaimEvent = _claimEvent;
+    widget.controller.addListener(_onFeatureChanged);
+  }
+
+  @override
+  void didUpdateWidget(covariant QuestScreen oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.controller == widget.controller) return;
+    oldWidget.controller.removeListener(_onFeatureChanged);
+    widget.controller.addListener(_onFeatureChanged);
+    _lastClaimEvent = _claimEvent;
+  }
+
+  String? get _claimEvent {
+    final message = widget.controller.claimMessage;
+    if (message == null || !message.endsWith('XP CLAIMED')) return null;
+    return '${widget.controller.claimMessageQuestId}:$message';
+  }
+
+  void _onFeatureChanged() {
+    final claimEvent = _claimEvent;
+    if (claimEvent == null || claimEvent == _lastClaimEvent) return;
+    _lastClaimEvent = claimEvent;
+    _awanController.show(AwanMascotState.special);
+  }
+
+  @override
+  void dispose() {
+    widget.controller.removeListener(_onFeatureChanged);
+    _awanController.dispose();
+    super.dispose();
+  }
+
+  @override
   Widget build(BuildContext context) => AnimatedBuilder(
-    animation: controller,
+    animation: widget.controller,
     builder: (context, _) => SafeArea(
       child: RefreshIndicator(
-        onRefresh: () => controller.loadQuests(force: true),
+        onRefresh: () => widget.controller.loadQuests(force: true),
         child: ListView(
           key: const Key('quest_list'),
           padding: const EdgeInsets.all(16),
           children: [
-            const OraScreenTitle(
-              title: 'QUEST BOARD',
-              subtitle: 'ACTIVE MISSIONS FROM ORA MASTER',
-              assetName: 'quest.png',
+            Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Expanded(
+                  child: OraScreenTitle(
+                    title: 'QUEST BOARD',
+                    subtitle: 'ACTIVE MISSIONS FROM ORA MASTER',
+                    assetName: 'quest.png',
+                  ),
+                ),
+                AwanMascotSlot(
+                  controller: _awanController,
+                  minSize: 34,
+                  maxSize: 45,
+                ),
+              ],
             ),
             const SizedBox(height: 16),
-            if (controller.questPhase == LoadPhase.loading &&
-                controller.quests.isEmpty)
+            if (widget.controller.questPhase == LoadPhase.loading &&
+                widget.controller.quests.isEmpty)
               const OraStatusPanel(
                 kind: OraPanelKind.loading,
                 message: 'CONTACTING QUEST MASTER...',
               )
-            else if (controller.questPhase == LoadPhase.error &&
-                controller.quests.isEmpty)
+            else if (widget.controller.questPhase == LoadPhase.error &&
+                widget.controller.quests.isEmpty)
               OraStatusPanel(
                 kind: OraPanelKind.error,
                 message:
-                    controller.questError ?? 'QUESTS UNAVAILABLE - TRY AGAIN',
-                onRetry: () => controller.loadQuests(force: true),
+                    widget.controller.questError ??
+                    'QUESTS UNAVAILABLE - TRY AGAIN',
+                onRetry: () => widget.controller.loadQuests(force: true),
               )
-            else if (controller.quests.isEmpty)
+            else if (widget.controller.quests.isEmpty)
               const OraStatusPanel(
                 kind: OraPanelKind.empty,
                 message: 'THE QUEST BOARD IS CLEAR.',
               ),
-            if (controller.questsAreFallback) ...[
+            if (widget.controller.questsAreFallback) ...[
               const _FallbackBanner(),
               const SizedBox(height: 8),
             ],
-            for (final quest in controller.quests) ...[
+            for (final quest in widget.controller.quests) ...[
               _QuestCard(
                 quest: quest,
-                isClaiming: controller.claimingQuestId == quest.questId,
-                claimsLocked: controller.claimingQuestId != null,
-                claimMessage: controller.claimMessage,
+                isClaiming: widget.controller.claimingQuestId == quest.questId,
+                claimsLocked: widget.controller.claimingQuestId != null,
+                claimMessage: widget.controller.claimMessage,
                 showClaimMessage:
-                    controller.claimMessageQuestId == quest.questId,
-                onClaim: () => controller.claimQuest(quest.questId),
+                    widget.controller.claimMessageQuestId == quest.questId,
+                onClaim: () => widget.controller.claimQuest(quest.questId),
               ),
               const SizedBox(height: 12),
             ],
@@ -189,8 +250,9 @@ class _QuestCard extends StatelessWidget {
           OraStatLine(
             label: quest.progress == null ? 'TARGET' : 'PROGRESS',
             value: quest.progress == null
-                ? '${compactNumber(quest.targetValue)} ${quest.unit}'.trim()
-                : '${compactNumber(quest.progress!)} / ${compactNumber(quest.targetValue)} ${quest.unit}',
+                ? '${compactNumber(quest.targetValue)} ${quest.progressUnit}'
+                      .trim()
+                : '${compactNumber(quest.progress!)} / ${compactNumber(quest.targetValue)} ${quest.progressUnit}',
           ),
           if (quest.progress != null) ...[
             const SizedBox(height: 5),
