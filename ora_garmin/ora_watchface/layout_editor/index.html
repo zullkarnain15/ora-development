@@ -1,0 +1,63 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>ORA Watch Face Layout Editor</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div class="app">
+<header class="topbar">
+  <div><h1>ORA Watch Face Layout Editor</h1><p>Canvas 360×360 • drag layer • resize • export JSON</p></div>
+  <div class="top-actions"><button id="resetBtn">Reset Layout</button><button id="copyBtn" class="primary">Copy Layout JSON</button></div>
+</header>
+<main class="workspace">
+<section class="preview-panel">
+  <div class="preview-toolbar">
+    <label>Zoom <input id="zoomRange" type="range" min="80" max="180" value="130"><span id="zoomValue">130%</span></label>
+    <label class="check"><input id="safeCircleToggle" type="checkbox" checked> Safe circle</label>
+  </div>
+  <div class="stage-shell"><div id="stageScaler"><div id="stage">
+    <div id="safeCircle"></div>
+    <img id="layer-background" class="layer image-layer" draggable="false">
+    <img id="layer-logo" class="layer image-layer" draggable="false">
+    <img id="layer-timePanel" class="layer image-layer" draggable="false">
+    <img id="layer-datePanel" class="layer image-layer" draggable="false">
+    <img id="layer-mascot" class="layer image-layer" draggable="false">
+    <img id="layer-stepsPanel" class="layer image-layer" draggable="false">
+    <img id="layer-recoveryPanel" class="layer image-layer" draggable="false">
+    <img id="layer-bottomBar" class="layer image-layer" draggable="false">
+    <div id="layer-timeText" class="layer text-layer jersey">15:12</div>
+    <div id="layer-dateText" class="layer text-layer pressstart">MON 24 AUG</div>
+    <div id="layer-stepsText" class="layer text-layer jersey">8123</div>
+    <div id="layer-recoveryText" class="layer text-layer jersey">18 H</div>
+    <div id="layer-batteryText" class="layer text-layer jersey">82%</div>
+  </div></div></div>
+  <div class="hint">Klik layer untuk memilih. Drag untuk pindah. Resize dari panel kanan.</div>
+</section>
+<aside class="controls">
+<section class="card"><h2>Layer</h2><div id="layerList" class="layer-list"></div></section>
+<section class="card">
+  <h2>Selected Layer</h2><div id="selectedName" class="selected-name">—</div>
+  <div class="grid-2">
+    <label>X <input id="xInput" type="number"></label>
+    <label>Y <input id="yInput" type="number"></label>
+    <label>W <input id="wInput" type="number" min="1"></label>
+    <label>H <input id="hInput" type="number" min="1"></label>
+  </div>
+  <div id="textControls" class="text-controls hidden">
+    <label>Text <input id="textInput" type="text"></label>
+    <label>Font <select id="fontSelect"><option value="Jersey10">Jersey 10</option><option value="PressStart2P">Press Start 2P</option><option value="system">System fallback</option></select></label>
+    <label>Font Size <input id="fontSizeInput" type="number" min="6" max="120"></label>
+    <label>Color <input id="colorInput" type="color" value="#ffffff"></label>
+  </div>
+  <div class="button-row"><button id="centerXBtn">Center X</button><button id="centerYBtn">Center Y</button></div>
+</section>
+<section class="card"><h2>Assets</h2><p class="small">Default path: <code>../assets_ready</code>. Kalau tidak muncul, pilih PNG manual.</p><div id="assetInputs" class="asset-inputs"></div></section>
+<section class="card"><h2>Layout JSON</h2><textarea id="jsonOutput" rows="15" readonly></textarea></section>
+</aside>
+</main>
+</div>
+<script src="app.js"></script>
+</body></html>
