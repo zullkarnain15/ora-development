@@ -341,6 +341,15 @@ class FeatureController extends ChangeNotifier {
     }
   }
 
+  Future<bool> saveImportedActivity(FinalActivity activity) async {
+    if (activity.ownerNik != session.nik) return false;
+    final inserted = await activityStore.insert(activity);
+    if (!inserted) return false;
+    await loadActivities(force: true);
+    await syncPending(manual: false);
+    return true;
+  }
+
   Future<bool> deleteNotEligibleActivity(String activityId) async {
     final deleted = await activityStore.deleteNotEligible(
       activityId,

@@ -5,6 +5,8 @@ import '../features/auth/domain/auth_models.dart';
 import '../features/auth/presentation/activation_screen.dart';
 import '../features/auth/presentation/login_screen.dart';
 import '../features/dashboard/application/feature_controller.dart';
+import '../features/activity_import/application/activity_import_inbox.dart';
+import '../features/activity_import/data/activity_import_bridge_api.dart';
 import '../shared/widgets/ora_widgets.dart';
 import 'app_shell.dart';
 
@@ -13,9 +15,13 @@ class SessionGate extends StatelessWidget {
     super.key,
     required this.controller,
     required this.featureControllerFactory,
+    this.importInbox,
+    this.importBridgeApi,
   });
   final AuthController controller;
   final FeatureControllerFactory featureControllerFactory;
+  final ActivityImportInbox? importInbox;
+  final ActivityImportBridgeApi? importBridgeApi;
 
   @override
   Widget build(BuildContext context) => AnimatedBuilder(
@@ -46,6 +52,8 @@ class SessionGate extends StatelessWidget {
         session: controller.session!,
         authController: controller,
         featureControllerFactory: featureControllerFactory,
+        importInbox: importInbox,
+        importBridgeApi: importBridgeApi,
       ),
     },
   );

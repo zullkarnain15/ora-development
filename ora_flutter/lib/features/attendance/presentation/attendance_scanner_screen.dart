@@ -6,6 +6,8 @@ import 'package:mobile_scanner/mobile_scanner.dart';
 
 import '../../../core/network/apps_script_client.dart';
 import '../../../core/theme/ora_theme.dart';
+import '../../mascot/awan_mascot.dart';
+import '../../mascot/awan_mascot_state.dart';
 import '../../../shared/widgets/ora_widgets.dart';
 import '../data/attendance_camera_cleanup.dart';
 import '../../dashboard/application/feature_controller.dart';
@@ -263,6 +265,13 @@ class _AttendanceScannerScreenState extends State<AttendanceScannerScreen>
       _messageBody(
         context,
         icon: Icons.emoji_events_outlined,
+        illustration: const AwanMascot(
+          state: AwanMascotState.success,
+          size: 90,
+          loop: false,
+          returnToIdle: false,
+          semanticLabel: 'Awan merayakan pencapaian',
+        ),
         title: 'STAMP CLAIMED!',
         message: result.eventName?.isNotEmpty == true
             ? result.eventName!
@@ -372,6 +381,7 @@ class _AttendanceScannerScreenState extends State<AttendanceScannerScreen>
     required IconData icon,
     required String title,
     required String message,
+    Widget? illustration,
     List<String> details = const [],
     String? primaryLabel,
     VoidCallback? onPrimary,
@@ -382,7 +392,7 @@ class _AttendanceScannerScreenState extends State<AttendanceScannerScreen>
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            Icon(icon, size: 44, color: OraColors.gold),
+            illustration ?? Icon(icon, size: 44, color: OraColors.gold),
             const SizedBox(height: 16),
             Text(
               title,

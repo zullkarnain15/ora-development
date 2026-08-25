@@ -340,6 +340,31 @@ void main() {
     expect(controller.latestActivity?.activityId, 'SERVER-NEW');
   });
 
+  test(
+    'imported activity uses the existing local queue and sync flow',
+    () async {
+      final api = _FakeFeatureApi();
+      final store = MemoryActivityStore();
+      final controller = FeatureController(
+        session: _session,
+        api: api,
+        activityStore: store,
+      );
+      final activity = _localActivity(
+        'import_strava_fixture',
+        start: DateTime(2026, 8, 25, 6).millisecondsSinceEpoch,
+      );
+
+      expect(await controller.saveImportedActivity(activity), isTrue);
+
+      expect(controller.activities.single.activityId, activity.activityId);
+      expect(api.submitCalls, 1);
+      expect(api.submittedPayloads.single.fields['source'], 'STRAVA');
+      expect(await store.pending(_session.nik), isEmpty);
+      controller.dispose();
+    },
+  );
+
   test('backend-only summary preserves distance duration and pace', () async {
     final api = _FakeFeatureApi()
       ..backendActivities = [_backendActivity('SUMMARY', start: 1000)];

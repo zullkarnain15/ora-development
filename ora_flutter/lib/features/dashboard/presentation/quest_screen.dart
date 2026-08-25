@@ -48,7 +48,7 @@ class _QuestScreenState extends State<QuestScreen> {
     final claimEvent = _claimEvent;
     if (claimEvent == null || claimEvent == _lastClaimEvent) return;
     _lastClaimEvent = claimEvent;
-    _awanController.show(AwanMascotState.special);
+    _awanController.show(AwanMascotState.success);
   }
 
   @override

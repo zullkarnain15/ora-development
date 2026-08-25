@@ -24,6 +24,12 @@ const ORA_SESSION_TTL_SECONDS = 2592000; // 30 days
 const ORA_SESSION_CACHE_TTL_SECONDS = 21600; // Apps Script cache maximum: 6 hours
 const ORA_SESSION_PROPERTY_PREFIX = 'ora_session_';
 const ORA_SPREADSHEET_ID_PROPERTY = 'ORA_SPREADSHEET_ID';
+const ORA_IMPORT_TOKEN_TTL_SECONDS = 600; // 10 minutes
+const ORA_IMPORT_TOKEN_PROPERTY_PREFIX = 'ora_import_';
+const ORA_IMPORT_FOLDER_ID_PROPERTY = 'ORA_IMPORT_FOLDER_ID';
+const ORA_IMPORT_MAX_IMAGE_BYTES = 2 * 1024 * 1024;
+const ORA_IMPORT_MAX_TEXT_LENGTH = 20000;
+const ORA_IMPORT_MAX_ACTIVE = 100;
 
 const ORA_CONFIG_DEFINITIONS = Object.freeze({
   MIN_DISTANCE_VALID_RUN_KM: Object.freeze({
@@ -218,6 +224,12 @@ function doPost(e) {
         return handleUpdateNickname_(request);
       case 'submitactivity':
         return handleSubmitActivity_(request);
+      case 'createimporttoken':
+        return handleCreateImportToken_(request);
+      case 'getimportpayload':
+        return handleGetImportPayload_(request);
+      case 'consumeimporttoken':
+        return handleConsumeImportToken_(request);
       case 'getactivityhistory':
         return handleGetActivityHistory_(request);
       case 'getuserstats':
@@ -251,6 +263,335 @@ function doPost(e) {
 
     console.error('ORA doPost failed: %s', safeErrorMessage_(error));
     return jsonError_('INTERNAL_ERROR', 'Terjadi kesalahan pada server ORA.');
+  }
+}
+
+function handleCreateImportToken_(request) {
+  const sharedText = sanitizeImportText_(request.sharedText);
+  const sharedUrl = sanitizeImportUrl_(request.sharedUrl);
+  const sourceHint = normalizeImportActivitySource_(request.sourceHint || 'UNKNOWN');
+  const imageBase64 = String(request.imageBase64 == null ? '' : request.imageBase64).trim();
+  const imageMimeType = String(request.imageMimeType == null ? '' : request.imageMimeType).trim().toLowerCase();
+  const imageName = sanitizeImportFileName_(request.imageName);
+
+  if (!sharedText && !sharedUrl && !imageBase64) {
+    return jsonError_('NO_SHARED_DATA', 'Tidak ada data activity untuk diimport.');
+  }
+  if (imageBase64 && imageMimeType.indexOf('image/') !== 0) {
+    return jsonError_('INVALID_IMPORT_IMAGE', 'Format screenshot tidak didukung.');
+  }
+
+  let imageBytes = null;
+  if (imageBase64) {
+    try {
+      imageBytes = Utilities.base64Decode(imageBase64);
+    } catch (error) {
+      return jsonError_('INVALID_IMPORT_IMAGE', 'Screenshot tidak valid.');
+    }
+    if (imageBytes.length > ORA_IMPORT_MAX_IMAGE_BYTES) {
+      return jsonError_('IMPORT_IMAGE_TOO_LARGE', 'Screenshot maksimal 2 MB.');
+    }
+  }
+
+  const lock = LockService.getScriptLock();
+  lock.waitLock(10000);
+  try {
+    const properties = PropertiesService.getScriptProperties();
+    cleanupExpiredImportTokens_(properties, Date.now());
+    const activeCount = Object.keys(properties.getProperties()).filter(function (key) {
+      return key.indexOf(ORA_IMPORT_TOKEN_PROPERTY_PREFIX) === 0;
+    }).length;
+    if (activeCount >= ORA_IMPORT_MAX_ACTIVE) {
+      return jsonError_('IMPORT_BUSY', 'Import service sedang sibuk. Coba kembali.');
+    }
+
+    const nowMillis = Date.now();
+    const token = createImportTokenValue_();
+    const key = importTokenPropertyKey_(token);
+    const payload = {
+      sharedText: sharedText || null,
+      sharedUrl: sharedUrl || null,
+      sourceHint: sourceHint,
+      imageBase64: imageBase64 || null,
+      imageMimeType: imageBase64 ? imageMimeType : null,
+      imageName: imageBase64 ? imageName : null,
+      receivedAt: new Date(nowMillis).toISOString(),
+    };
+    const file = getImportFolder_().createFile(
+      Utilities.newBlob(
+        JSON.stringify(payload),
+        'application/json',
+        'ora-import-' + key.substring(ORA_IMPORT_TOKEN_PROPERTY_PREFIX.length, 28) + '.json'
+      )
+    );
+    properties.setProperty(key, JSON.stringify({
+      state: 'PENDING',
+      fileId: file.getId(),
+      createdAtMillis: nowMillis,
+      expiresAtMillis: nowMillis + ORA_IMPORT_TOKEN_TTL_SECONDS * 1000,
+    }));
+    return jsonSuccess_({
+      status: 'CREATED',
+      importToken: token,
+      expiresInSeconds: ORA_IMPORT_TOKEN_TTL_SECONDS,
+    });
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+function handleGetImportPayload_(request) {
+  const token = normalizeImportToken_(request.importToken);
+  const record = requireImportTokenRecord_(token);
+  let payload;
+  try {
+    payload = JSON.parse(DriveApp.getFileById(record.fileId).getBlob().getDataAsString('UTF-8'));
+  } catch (error) {
+    throw oraError_('IMPORT_TOKEN_INVALID', 'Import payload tidak tersedia.');
+  }
+  return jsonSuccess_({
+    status: 'READY',
+    payload: payload,
+    expiresAt: new Date(record.expiresAtMillis).toISOString(),
+  });
+}
+
+function handleConsumeImportToken_(request) {
+  const token = normalizeImportToken_(request.importToken);
+  const lock = LockService.getScriptLock();
+  lock.waitLock(10000);
+  try {
+    const properties = PropertiesService.getScriptProperties();
+    const key = importTokenPropertyKey_(token);
+    const serialized = properties.getProperty(key);
+    if (!serialized) throw oraError_('IMPORT_TOKEN_INVALID', 'Import token tidak valid.');
+    const record = parseImportTokenRecord_(serialized);
+    if (record.state === 'CONSUMED') {
+      throw oraError_('IMPORT_ALREADY_USED', 'Import token sudah digunakan.');
+    }
+    if (Number(record.expiresAtMillis) <= Date.now()) {
+      deleteImportPayloadFile_(record.fileId);
+      properties.deleteProperty(key);
+      throw oraError_('IMPORT_EXPIRED', 'Import token telah kedaluwarsa.');
+    }
+    deleteImportPayloadFile_(record.fileId);
+    properties.setProperty(key, JSON.stringify({
+      state: 'CONSUMED',
+      fileId: null,
+      createdAtMillis: record.createdAtMillis,
+      expiresAtMillis: Date.now() + ORA_IMPORT_TOKEN_TTL_SECONDS * 1000,
+    }));
+    return jsonSuccess_({ status: 'CONSUMED' });
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+function requireImportTokenRecord_(token) {
+  const properties = PropertiesService.getScriptProperties();
+  const key = importTokenPropertyKey_(token);
+  const serialized = properties.getProperty(key);
+  if (!serialized) throw oraError_('IMPORT_TOKEN_INVALID', 'Import token tidak valid.');
+  const record = parseImportTokenRecord_(serialized);
+  if (record.state === 'CONSUMED') {
+    throw oraError_('IMPORT_ALREADY_USED', 'Import token sudah digunakan.');
+  }
+  if (Number(record.expiresAtMillis) <= Date.now()) {
+    deleteImportPayloadFile_(record.fileId);
+    properties.deleteProperty(key);
+    throw oraError_('IMPORT_EXPIRED', 'Import token telah kedaluwarsa.');
+  }
+  if (!record.fileId) throw oraError_('IMPORT_TOKEN_INVALID', 'Import payload tidak tersedia.');
+  return record;
+}
+
+function parseImportTokenRecord_(serialized) {
+  try {
+    const record = JSON.parse(serialized);
+    if (!record || !record.state || !Number.isFinite(Number(record.expiresAtMillis))) {
+      throw new Error('Invalid import token record');
+    }
+    return record;
+  } catch (error) {
+    throw oraError_('IMPORT_TOKEN_INVALID', 'Import token tidak valid.');
+  }
+}
+
+function cleanupExpiredImportTokens_(properties, nowMillis) {
+  const all = properties.getProperties();
+  Object.keys(all).forEach(function (key) {
+    if (key.indexOf(ORA_IMPORT_TOKEN_PROPERTY_PREFIX) !== 0) return;
+    try {
+      const record = parseImportTokenRecord_(all[key]);
+      if (Number(record.expiresAtMillis) > nowMillis) return;
+      deleteImportPayloadFile_(record.fileId);
+    } catch (error) {
+      // Invalid temporary metadata is safe to delete without logging payload data.
+    }
+    properties.deleteProperty(key);
+  });
+}
+
+function getImportFolder_() {
+  const properties = PropertiesService.getScriptProperties();
+  const configuredId = properties.getProperty(ORA_IMPORT_FOLDER_ID_PROPERTY);
+  if (configuredId) {
+    try {
+      return DriveApp.getFolderById(configuredId);
+    } catch (error) {
+      properties.deleteProperty(ORA_IMPORT_FOLDER_ID_PROPERTY);
+    }
+  }
+  const folder = DriveApp.createFolder('ORA Temporary Imports');
+  properties.setProperty(ORA_IMPORT_FOLDER_ID_PROPERTY, folder.getId());
+  return folder;
+}
+
+function deleteImportPayloadFile_(fileId) {
+  if (!fileId) return;
+  try {
+    DriveApp.getFileById(String(fileId)).setTrashed(true);
+  } catch (error) {
+    // The payload is already unavailable, which is equivalent to deletion.
+  }
+}
+
+function createImportTokenValue_() {
+  const entropy = Utilities.getUuid() + ':' + Utilities.getUuid() + ':' + Date.now();
+  return Utilities.base64EncodeWebSafe(
+    Utilities.computeDigest(
+      Utilities.DigestAlgorithm.SHA_256,
+      entropy,
+      Utilities.Charset.UTF_8
+    )
+  ).replace(/=+$/g, '');
+}
+
+function normalizeImportToken_(value) {
+  const token = String(value == null ? '' : value).trim();
+  if (!/^[A-Za-z0-9_-]{32,128}$/.test(token)) {
+    throw oraError_('IMPORT_TOKEN_INVALID', 'Import token tidak valid.');
+  }
+  return token;
+}
+
+function importTokenPropertyKey_(token) {
+  const digest = Utilities.computeDigest(
+    Utilities.DigestAlgorithm.SHA_256,
+    normalizeImportToken_(token),
+    Utilities.Charset.UTF_8
+  );
+  return ORA_IMPORT_TOKEN_PROPERTY_PREFIX + Utilities.base64EncodeWebSafe(digest).replace(/=+$/g, '');
+}
+
+function sanitizeImportText_(value) {
+  const text = String(value == null ? '' : value).trim();
+  if (text.length > ORA_IMPORT_MAX_TEXT_LENGTH) {
+    throw oraError_('IMPORT_TEXT_TOO_LARGE', 'Shared text terlalu panjang.');
+  }
+  return text;
+}
+
+function sanitizeImportUrl_(value) {
+  const url = String(value == null ? '' : value).trim();
+  if (!url) return '';
+  if (url.length > 2048 || !/^https:\/\//i.test(url)) {
+    throw oraError_('INVALID_IMPORT_URL', 'Shared URL tidak valid.');
+  }
+  return url;
+}
+
+function sanitizeImportFileName_(value) {
+  return String(value == null ? 'activity.jpg' : value)
+    .replace(/[^A-Za-z0-9._-]/g, '_')
+    .substring(0, 120) || 'activity.jpg';
+}
+
+/**
+ * Manual Apps Script regression for the anonymous temporary import lifecycle.
+ * This creates private temporary Drive files and always removes its fixtures.
+ */
+function testImportTokenLifecycle() {
+  const tokens = [];
+  try {
+    const created = JSON.parse(handleCreateImportToken_({
+      sharedText: 'Morning Run\n8.09 km\n58:06',
+      sharedUrl: 'https://www.strava.com/activities/test',
+      sourceHint: 'STRAVA',
+    }).getContent());
+    assertBackendTest_(created.ok === true, 'Create import token harus berhasil.');
+    const token = created.data.importToken;
+    tokens.push(token);
+    assertBackendTest_(!/Morning|8\.09|STRAVA/.test(token), 'Token tidak boleh berisi payload plaintext.');
+
+    const fetched = JSON.parse(handleGetImportPayload_({ importToken: token }).getContent());
+    assertBackendTest_(fetched.ok === true, 'Fetch import token harus berhasil.');
+    assertBackendTest_(
+      fetched.data.payload.sharedText.indexOf('8.09 km') >= 0,
+      'Fetch harus mengembalikan payload yang sama.'
+    );
+
+    const consumed = JSON.parse(handleConsumeImportToken_({ importToken: token }).getContent());
+    assertBackendTest_(consumed.data.status === 'CONSUMED', 'Consume harus sukses.');
+    assertImportErrorCode_(function () {
+      handleConsumeImportToken_({ importToken: token });
+    }, 'IMPORT_ALREADY_USED');
+
+    const expiring = JSON.parse(handleCreateImportToken_({
+      sharedText: 'Expiring test payload',
+      sourceHint: 'UNKNOWN',
+    }).getContent()).data.importToken;
+    tokens.push(expiring);
+    const properties = PropertiesService.getScriptProperties();
+    const expiringKey = importTokenPropertyKey_(expiring);
+    const expiringRecord = JSON.parse(properties.getProperty(expiringKey));
+    expiringRecord.expiresAtMillis = Date.now() - 1;
+    properties.setProperty(expiringKey, JSON.stringify(expiringRecord));
+    assertImportErrorCode_(function () {
+      handleGetImportPayload_({ importToken: expiring });
+    }, 'IMPORT_EXPIRED');
+
+    assertImportErrorCode_(function () {
+      handleGetImportPayload_({ importToken: 'AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA' });
+    }, 'IMPORT_TOKEN_INVALID');
+
+    return {
+      status: 'PASS',
+      createFetchConsume: true,
+      secondConsume: 'IMPORT_ALREADY_USED',
+      expired: 'IMPORT_EXPIRED',
+      unknown: 'IMPORT_TOKEN_INVALID',
+    };
+  } finally {
+    tokens.forEach(cleanupImportTokenTestFixture_);
+  }
+}
+
+function assertImportErrorCode_(operation, expectedCode) {
+  let actualCode = null;
+  try {
+    operation();
+  } catch (error) {
+    actualCode = error && error.oraCode;
+  }
+  assertBackendTest_(
+    actualCode === expectedCode,
+    'Expected ' + expectedCode + ', received ' + String(actualCode) + '.'
+  );
+}
+
+function cleanupImportTokenTestFixture_(token) {
+  try {
+    const properties = PropertiesService.getScriptProperties();
+    const key = importTokenPropertyKey_(token);
+    const serialized = properties.getProperty(key);
+    if (serialized) {
+      const record = parseImportTokenRecord_(serialized);
+      deleteImportPayloadFile_(record.fileId);
+    }
+    properties.deleteProperty(key);
+  } catch (error) {
+    // Test cleanup is best effort and never logs temporary payload contents.
   }
 }
 
@@ -429,6 +770,7 @@ function handleSubmitActivity_(request) {
   const durationSec = Number(activity.durationSec);
   const distanceKm = Number(activity.distanceKm);
   const avgPace = String(activity.avgPace == null ? '' : activity.avgPace).trim();
+  const source = normalizeImportActivitySource_(activity.source);
   const deviceTime = String(activity.deviceTime == null ? '' : activity.deviceTime).trim();
 
   if (!activityId) {
@@ -483,6 +825,7 @@ function handleSubmitActivity_(request) {
       durationSec: durationSec,
       distanceKm: distanceKm,
       avgPace: avgPace,
+      source: source,
       deviceTime: deviceTime,
     });
 
@@ -1948,7 +2291,7 @@ function appendActivity_(sheet, activity) {
     Number(activity.distanceKm),
     String(activity.avgPace || ''),
     'COMPLETED',
-    'ANDROID',
+    String(activity.source || 'ANDROID'),
     String(activity.deviceTime || ''),
     now,
     now,
@@ -1958,6 +2301,21 @@ function appendActivity_(sheet, activity) {
   sheet.getRange(nextRow, 1, 1, 2).setNumberFormat('@');
   sheet.getRange(nextRow, 1, 1, ORA_HEADERS.Activities.length).setValues(values);
   return nextRow;
+}
+
+function normalizeImportActivitySource_(value) {
+  const source = String(value == null ? '' : value).trim().toUpperCase();
+  return [
+    'STRAVA',
+    'GARMIN',
+    'COROS',
+    'SUUNTO',
+    'HUAWEI',
+    'AMAZFIT',
+    'UNKNOWN',
+    'ANDROID',
+    'WEB',
+  ].indexOf(source) >= 0 ? source : 'ANDROID';
 }
 
 function ensureUserStatsSheet_() {

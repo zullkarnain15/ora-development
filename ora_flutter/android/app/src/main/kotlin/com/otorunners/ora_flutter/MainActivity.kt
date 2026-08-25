@@ -1,13 +1,17 @@
 package com.otorunners.ora_flutter
 
 import android.content.Context
+import android.content.Intent
+import android.net.Uri
 import android.security.keystore.KeyGenParameterSpec
 import android.security.keystore.KeyProperties
 import android.util.Base64
+import android.util.Patterns
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.embedding.android.FlutterActivity
 import io.flutter.plugin.common.MethodChannel
 import java.security.KeyStore
+import java.io.ByteArrayOutputStream
 import javax.crypto.Cipher
 import javax.crypto.KeyGenerator
 import javax.crypto.SecretKey
@@ -15,6 +19,8 @@ import javax.crypto.spec.GCMParameterSpec
 
 class MainActivity : FlutterActivity() {
     private var trackingBridge: TrackingBridge? = null
+    private var shareChannel: MethodChannel? = null
+    private var pendingSharePayload: Map<String, Any?>? = null
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
@@ -51,6 +57,27 @@ class MainActivity : FlutterActivity() {
         trackingBridge = TrackingBridge(this, flutterEngine.dartExecutor.binaryMessenger).also {
             it.configure()
         }
+        shareChannel = MethodChannel(
+            flutterEngine.dartExecutor.binaryMessenger,
+            SHARE_CHANNEL
+        ).also { channel ->
+            channel.setMethodCallHandler { call, result ->
+                when (call.method) {
+                    "getInitialSharePayload" -> {
+                        result.success(pendingSharePayload)
+                        pendingSharePayload = null
+                    }
+                    else -> result.notImplemented()
+                }
+            }
+        }
+        captureShareIntent(intent, notifyDart = false)
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        captureShareIntent(intent, notifyDart = true)
     }
 
     override fun onRequestPermissionsResult(
@@ -65,6 +92,9 @@ class MainActivity : FlutterActivity() {
     override fun onDestroy() {
         trackingBridge?.dispose()
         trackingBridge = null
+        shareChannel?.setMethodCallHandler(null)
+        shareChannel = null
+        pendingSharePayload = null
         super.onDestroy()
     }
 
@@ -73,8 +103,59 @@ class MainActivity : FlutterActivity() {
         super.onStop()
     }
 
+    private fun captureShareIntent(intent: Intent?, notifyDart: Boolean) {
+        if (intent?.action != Intent.ACTION_SEND) return
+        val sharedText = intent.getStringExtra(Intent.EXTRA_TEXT)?.trim().orEmpty()
+        val sharedUrl = Patterns.WEB_URL.matcher(sharedText).let { matcher ->
+            if (matcher.find()) matcher.group() else null
+        }
+        val imageUri = intent.streamUri()
+        val imageBytes = imageUri?.let { readImageBytes(it) }
+        if (sharedText.isEmpty() && sharedUrl.isNullOrEmpty() && imageBytes == null) return
+        val payload = mutableMapOf<String, Any?>(
+            "sharedText" to sharedText.ifEmpty { null },
+            "sharedUrl" to sharedUrl,
+            "sourceHint" to if (
+                sharedText.contains("strava", ignoreCase = true) ||
+                sharedUrl?.contains("strava", ignoreCase = true) == true
+            ) "STRAVA" else null,
+            "imageBytes" to imageBytes,
+            "imageMimeType" to imageUri?.let { contentResolver.getType(it) },
+            "imageName" to null,
+        )
+        if (notifyDart && shareChannel != null) {
+            shareChannel?.invokeMethod("onSharePayload", payload)
+        } else {
+            pendingSharePayload = payload
+        }
+    }
+
+    @Suppress("DEPRECATION")
+    private fun Intent.streamUri(): Uri? =
+        getParcelableExtra(Intent.EXTRA_STREAM) as? Uri
+
+    private fun readImageBytes(uri: Uri): ByteArray? = try {
+        contentResolver.openInputStream(uri)?.use { input ->
+            val output = ByteArrayOutputStream()
+            val buffer = ByteArray(8192)
+            var total = 0
+            while (true) {
+                val count = input.read(buffer)
+                if (count < 0) break
+                total += count
+                if (total > MAX_SHARE_IMAGE_BYTES) return null
+                output.write(buffer, 0, count)
+            }
+            output.toByteArray()
+        }
+    } catch (_: Exception) {
+        null
+    }
+
     companion object {
         private const val CHANNEL = "ora/session_store"
+        private const val SHARE_CHANNEL = "ora/activity_share"
+        private const val MAX_SHARE_IMAGE_BYTES = 5 * 1024 * 1024
     }
 }
 

@@ -1,13 +1,21 @@
 import 'dart:async';
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 import '../core/theme/ora_theme.dart';
 import '../core/network/network_reachability_monitor.dart';
 import '../features/auth/application/auth_controller.dart';
 import '../features/auth/domain/auth_models.dart';
 import '../features/auth/domain/auth_validation.dart';
+import '../features/activity_import/activity_import_config.dart';
+import '../features/activity_import/application/activity_import_controller.dart';
+import '../features/activity_import/application/activity_import_inbox.dart';
+import '../features/activity_import/data/activity_import_bridge_api.dart';
+import '../features/activity_import/presentation/activity_import_screen.dart';
+import '../core/network/apps_script_client.dart';
 import '../features/dashboard/application/feature_controller.dart';
 import '../features/dashboard/presentation/guild_screen.dart';
 import '../features/dashboard/presentation/home_screen.dart';
@@ -43,10 +51,14 @@ class AppShell extends StatefulWidget {
     required this.session,
     required this.authController,
     required this.featureControllerFactory,
+    this.importInbox,
+    this.importBridgeApi,
   });
   final UserSession session;
   final AuthController authController;
   final FeatureControllerFactory featureControllerFactory;
+  final ActivityImportInbox? importInbox;
+  final ActivityImportBridgeApi? importBridgeApi;
 
   @override
   State<AppShell> createState() => _AppShellState();
@@ -55,16 +67,28 @@ class AppShell extends StatefulWidget {
 class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
   OraDestination destination = OraDestination.home;
   bool showSettings = false;
+  bool showImport = false;
   late FeatureController featureController;
   late TrackingController trackingController;
   DateTime? _lastBackPressedAt;
   late final NetworkReachabilityMonitor _reachabilityMonitor;
+  late final ActivityImportInbox _importInbox;
+  late final ActivityImportBridgeApi _importBridgeApi;
+  late final bool _ownsImportInbox;
+  ActivityImportController? _importController;
 
   @override
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
     featureController = widget.featureControllerFactory(widget.session);
+    _ownsImportInbox = widget.importInbox == null;
+    _importInbox = widget.importInbox ?? ActivityImportInbox();
+    _importBridgeApi =
+        widget.importBridgeApi ??
+        AppsScriptActivityImportBridgeApi(AppsScriptClient());
+    _importInbox.addListener(_onImportInboxChanged);
+    if (_ownsImportInbox) unawaited(_importInbox.initialize());
     _reachabilityMonitor = NetworkReachabilityMonitor(
       onRestored: () => featureController.syncPending(manual: false),
     )..start();
@@ -72,6 +96,7 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
     unawaited(featureController.loadHome());
     unawaited(featureController.syncPending(manual: false));
     unawaited(trackingController.initialize());
+    _onImportInboxChanged();
   }
 
   @override
@@ -82,6 +107,8 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
       trackingController.dispose();
       featureController = widget.featureControllerFactory(widget.session);
       trackingController = _createTrackingController();
+      final launch = _importInbox.current;
+      if (launch != null) _openImport(launch);
       unawaited(featureController.loadHome());
       unawaited(featureController.syncPending(manual: false));
       unawaited(trackingController.initialize());
@@ -98,9 +125,53 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
     _reachabilityMonitor.stop();
+    _importInbox.removeListener(_onImportInboxChanged);
+    if (_ownsImportInbox) _importInbox.dispose();
+    _importController?.dispose();
     featureController.dispose();
     trackingController.dispose();
     super.dispose();
+  }
+
+  void _onImportInboxChanged() {
+    final launch = _importInbox.current;
+    if (launch == null || showImport || !_importAvailable) return;
+    _openImport(launch);
+  }
+
+  bool get _importAvailable =>
+      ActivityImportConfig.enabled &&
+      (!kIsWeb || ActivityImportConfig.webEnabled);
+
+  void _openImport(ActivityImportLaunch launch) {
+    _importController?.dispose();
+    final controller = ActivityImportController(
+      launch: launch,
+      inbox: _importInbox,
+      bridgeApi: _importBridgeApi,
+      featureController: featureController,
+    );
+    _importController = controller;
+    if (mounted) setState(() => showImport = true);
+    unawaited(controller.initialize());
+  }
+
+  void _closeImport() {
+    if (!mounted) return;
+    setState(() => showImport = false);
+    _importController?.dispose();
+    _importController = null;
+  }
+
+  void _startManualImport() {
+    if (mounted) setState(() => showSettings = false);
+    unawaited(_importInbox.openManual());
+  }
+
+  Future<void> _openShortcutSetup() async {
+    final value = ActivityImportConfig.shortcutUrl.trim();
+    if (value.isEmpty) return;
+    await launchUrl(Uri.parse(value), mode: LaunchMode.externalApplication);
   }
 
   TrackingController _createTrackingController() => TrackingController(
@@ -188,6 +259,11 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
   }
 
   void _handleBack() {
+    if (showImport) {
+      unawaited(_importController?.decline());
+      _closeImport();
+      return;
+    }
     if (showSettings) {
       _lastBackPressedAt = null;
       setState(() => showSettings = false);
@@ -277,12 +353,25 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
                 session: widget.session,
                 authController: widget.authController,
                 onLogout: _requestLogout,
+                onImportActivity: _startManualImport,
+                onOpenShortcut: _openShortcutSetup,
+              ),
+            ),
+          if (showImport && _importController != null)
+            MaterialPage<void>(
+              key: const ValueKey('ora_import'),
+              name: '/import',
+              child: ActivityImportScreen(
+                controller: _importController!,
+                onClose: _closeImport,
               ),
             ),
         ],
         onDidRemovePage: (page) {
           if (page.key == const ValueKey('ora_settings') && showSettings) {
             setState(() => showSettings = false);
+          } else if (page.key == const ValueKey('ora_import') && showImport) {
+            _closeImport();
           }
         },
       ),
@@ -296,10 +385,14 @@ class SettingsScreen extends StatelessWidget {
     required this.session,
     required this.authController,
     required this.onLogout,
+    this.onImportActivity,
+    this.onOpenShortcut,
   });
   final UserSession session;
   final AuthController authController;
   final Future<void> Function() onLogout;
+  final VoidCallback? onImportActivity;
+  final Future<void> Function()? onOpenShortcut;
 
   @override
   Widget build(BuildContext context) => Scaffold(
@@ -350,6 +443,42 @@ class SettingsScreen extends StatelessWidget {
             icon: const Icon(Icons.logout),
             label: const Text('LOGOUT'),
           ),
+          if (ActivityImportConfig.enabled &&
+              (!kIsWeb || ActivityImportConfig.webEnabled)) ...[
+            const SizedBox(height: 14),
+            _settingsCard('SHARE ACTIVITY', 'adventure.png', [
+              const Text(
+                'Send an activity from Strava or select a screenshot to review it in ORA.',
+              ),
+              const SizedBox(height: 11),
+              FilledButton.icon(
+                key: const Key('open_activity_import'),
+                onPressed: onImportActivity,
+                icon: const Icon(Icons.file_upload_outlined),
+                label: const Text('IMPORT ACTIVITY'),
+              ),
+              if (ActivityImportConfig.iosShortcutEnabled) ...[
+                const SizedBox(height: 9),
+                OutlinedButton.icon(
+                  key: const Key('open_ios_shortcut_setup'),
+                  onPressed: ActivityImportConfig.shortcutUrl.trim().isEmpty
+                      ? null
+                      : onOpenShortcut,
+                  icon: const Icon(Icons.ios_share),
+                  label: Text(
+                    ActivityImportConfig.shortcutUrl.trim().isEmpty
+                        ? 'SHORTCUT SETUP COMING SOON'
+                        : 'INSTALL SEND TO ORA',
+                  ),
+                ),
+                const SizedBox(height: 5),
+                const Text(
+                  'iPhone setup opens the official Shortcut page. ORA cannot detect installation status.',
+                  style: TextStyle(fontSize: 10),
+                ),
+              ],
+            ]),
+          ],
           const SizedBox(height: 14),
           _settingsCard('RUN SETTINGS', 'location.png', const [
             OraStatLine(

@@ -12,6 +12,15 @@
     "categories": ["fitness", "health", "games"],
     "orientation": "portrait-primary",
     "prefer_related_applications": false,
+    "share_target": {
+        "action": "./?share_target=1",
+        "method": "GET",
+        "params": {
+            "title": "title",
+            "text": "text",
+            "url": "url"
+        }
+    },
     "icons": [
         {
             "src": "icons/Icon-192.png",

@@ -184,6 +184,14 @@ class OraStatusPanel extends StatelessWidget {
         children: [
           if (kind == OraPanelKind.loading)
             const CircularProgressIndicator(color: OraColors.gold)
+          else if (kind == OraPanelKind.empty)
+            Image.asset(
+              'assets/mascot/awan/navy_awan_static.png',
+              width: 74,
+              height: 74,
+              fit: BoxFit.contain,
+              filterQuality: FilterQuality.none,
+            )
           else
             OraIcon(icon, size: 34),
           const SizedBox(height: 12),

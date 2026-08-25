@@ -2,9 +2,6 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 
 import '../../../core/theme/ora_theme.dart';
-import '../../mascot/awan_mascot_controller.dart';
-import '../../mascot/awan_mascot_slot.dart';
-import '../../mascot/awan_mascot_state.dart';
 import '../../../shared/widgets/ora_widgets.dart';
 import '../application/tracking_controller.dart';
 import '../domain/tracking_models.dart';
@@ -18,51 +15,6 @@ class RunScreen extends StatefulWidget {
 }
 
 class _RunScreenState extends State<RunScreen> {
-  late final AwanMascotController _awanController;
-  TrackingStatus? _lastTrackingStatus;
-
-  @override
-  void initState() {
-    super.initState();
-    _awanController = AwanMascotController(initialState: AwanMascotState.ready);
-    widget.controller.addListener(_syncAwan);
-    _syncAwan();
-  }
-
-  @override
-  void didUpdateWidget(covariant RunScreen oldWidget) {
-    super.didUpdateWidget(oldWidget);
-    if (oldWidget.controller == widget.controller) return;
-    oldWidget.controller.removeListener(_syncAwan);
-    widget.controller.addListener(_syncAwan);
-    _lastTrackingStatus = null;
-    _syncAwan();
-  }
-
-  void _syncAwan() {
-    final controller = widget.controller;
-    final status = controller.status;
-    if (status == TrackingStatus.finished &&
-        _lastTrackingStatus != TrackingStatus.finished) {
-      _awanController.show(AwanMascotState.success);
-    } else if (status != TrackingStatus.finished) {
-      _awanController.showTracking(
-        status,
-        gpsIsAccurate:
-            controller.gpsQuality == GpsQuality.excellent ||
-            controller.gpsQuality == GpsQuality.good,
-      );
-    }
-    _lastTrackingStatus = status;
-  }
-
-  @override
-  void dispose() {
-    widget.controller.removeListener(_syncAwan);
-    _awanController.dispose();
-    super.dispose();
-  }
-
   @override
   Widget build(BuildContext context) => AnimatedBuilder(
     animation: widget.controller,
@@ -91,13 +43,6 @@ class _RunScreenState extends State<RunScreen> {
             const SizedBox(height: 16),
             _Actions(controller: widget.controller),
           ],
-          const SizedBox(height: 10),
-          AwanMascotSlot(
-            controller: _awanController,
-            minSize: 25,
-            maxSize: 34,
-            alignment: Alignment.centerLeft,
-          ),
         ],
       ),
     ),

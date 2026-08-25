@@ -60,8 +60,19 @@ abstract final class ActivityPayloadMapper {
     required DateTime deviceTime,
   }) => ActivityUploadPayload(
     version: currentVersion,
-    fields: activity.toBackendJson(deviceTime: deviceTime),
+    fields: {
+      ...activity.toBackendJson(deviceTime: deviceTime),
+      'source': activitySourceFromId(activity.activityId),
+    },
   );
+}
+
+String activitySourceFromId(String activityId) {
+  final match = RegExp(
+    r'^import_([a-z]+)_',
+    caseSensitive: false,
+  ).firstMatch(activityId);
+  return match?.group(1)?.toUpperCase() ?? 'ANDROID';
 }
 
 class SyncQueueEntry {

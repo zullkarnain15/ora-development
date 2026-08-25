@@ -196,6 +196,31 @@ void main() {
       'sessionToken': 'fixture',
       'qrToken': 'QR-TOKEN',
     });
+    final activityRequest = transport.requests.singleWhere(
+      (item) => item['action'] == 'submitActivity',
+    );
+    expect(
+      (activityRequest['activity'] as Map<String, Object?>)['source'],
+      'ANDROID',
+    );
+    expect(
+      ActivityPayloadMapper.mapV1(
+        FinalActivity(
+          activityId: 'import_strava_fixture',
+          ownerNik: '1001',
+          nicknameSnapshot: 'RUNNER',
+          divisionGuildSnapshot: 'OPS',
+          startDateTimeMillis: 1,
+          endDateTimeMillis: 2001,
+          distanceMeters: 10,
+          activeDurationMillis: 2000,
+          averagePaceSecondsPerKm: 200,
+          createdAtMillis: 2001,
+        ),
+        deviceTime: DateTime.fromMillisecondsSinceEpoch(2001),
+      ).fields['source'],
+      'STRAVA',
+    );
   });
 
   test('all 16 actions preserve backend error codes', () async {

@@ -4,6 +4,8 @@ import 'package:flutter/foundation.dart';
 import '../core/theme/ora_theme.dart';
 import '../features/auth/application/auth_controller.dart';
 import '../features/dashboard/application/feature_controller.dart';
+import '../features/activity_import/application/activity_import_inbox.dart';
+import '../features/activity_import/data/activity_import_bridge_api.dart';
 import '../shared/widgets/ora_widgets.dart';
 import 'session_gate.dart';
 
@@ -12,10 +14,14 @@ class OraApp extends StatelessWidget {
     super.key,
     required this.authController,
     required this.featureControllerFactory,
+    this.importInbox,
+    this.importBridgeApi,
     this.fatalError,
   });
   final AuthController authController;
   final FeatureControllerFactory featureControllerFactory;
+  final ActivityImportInbox? importInbox;
+  final ActivityImportBridgeApi? importBridgeApi;
   final ValueListenable<Object?>? fatalError;
 
   @override
@@ -23,6 +29,8 @@ class OraApp extends StatelessWidget {
     Widget home = SessionGate(
       controller: authController,
       featureControllerFactory: featureControllerFactory,
+      importInbox: importInbox,
+      importBridgeApi: importBridgeApi,
     );
     final listenable = fatalError;
     if (listenable != null) {
