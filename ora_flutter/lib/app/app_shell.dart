@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import '../core/theme/ora_theme.dart';
+import '../core/platform/iphone_pwa_share_setup.dart';
 import '../core/network/network_reachability_monitor.dart';
 import '../features/auth/application/auth_controller.dart';
 import '../features/auth/domain/auth_models.dart';
@@ -376,84 +377,109 @@ class SettingsScreen extends StatelessWidget {
     required this.session,
     required this.authController,
     required this.onLogout,
+    this.showIphoneShareSetup,
+    this.onInstallIphoneShortcut,
   });
   final UserSession session;
   final AuthController authController;
   final Future<void> Function() onLogout;
+  final bool? showIphoneShareSetup;
+  final Future<void> Function()? onInstallIphoneShortcut;
 
   @override
-  Widget build(BuildContext context) => Scaffold(
-    appBar: AppBar(
-      title: const Text('SETTINGS'),
-      backgroundColor: OraColors.forest,
-    ),
-    body: SafeArea(
-      child: ListView(
-        padding: const EdgeInsets.all(20),
-        children: [
-          const OraScreenTitle(
-            title: 'SETTINGS',
-            subtitle: 'ORA - OTO RUNNERS ADVENTURE',
-            assetName: 'settings.png',
-          ),
-          const SizedBox(height: 18),
-          _settingsCard('ACCOUNT', 'you.png', [
-            Row(
-              children: [
-                const Expanded(child: Text('NICKNAME')),
-                Text(
-                  session.nickname,
-                  style: OraTextStyles.displaySmall.copyWith(
-                    color: OraColors.gold,
-                  ),
-                ),
-                const SizedBox(width: 4),
-                IconButton(
-                  key: const Key('edit_nickname'),
-                  onPressed: () => _editNickname(context),
-                  tooltip: 'Edit nickname',
-                  visualDensity: VisualDensity.compact,
-                  icon: const Icon(Icons.edit, color: OraColors.gold),
-                ),
-              ],
-            ),
-            OraStatLine(
-              label: 'DIVISION / GUILD',
-              value: session.divisionGuild,
-            ),
-            OraStatLine(label: 'ACCOUNT STATUS', value: session.status),
-          ]),
-          const SizedBox(height: 14),
-          FilledButton.icon(
-            key: const Key('logout_button'),
-            onPressed: onLogout,
-            icon: const Icon(Icons.logout),
-            label: const Text('LOGOUT'),
-          ),
-          const SizedBox(height: 14),
-          _settingsCard('RUN SETTINGS', 'location.png', const [
-            OraStatLine(
-              label: 'LOCATION / GPS',
-              value: 'REQUIRED WHILE RUNNING',
-            ),
-            OraStatLine(label: 'TRACKING', value: 'OFFLINE + RECOVERY'),
-          ]),
-          const SizedBox(height: 14),
-          _settingsCard('DATA & SAFETY', 'lock.png', const [
-            OraStatLine(label: 'SESSION', value: 'SECURE ON THIS DEVICE'),
-            OraStatLine(label: 'ACTIVITY LOG', value: 'OWNER ISOLATED'),
-            OraStatLine(label: 'BACKEND', value: 'ORA LIVE DATA'),
-          ]),
-          const SizedBox(height: 14),
-          _settingsCard('ABOUT', 'adventure.png', const [
-            OraStatLine(label: 'ORA', value: 'OTO RUNNERS ADVENTURE'),
-            OraStatLine(label: 'PROGRAM', value: 'RUN PLAYING GAME'),
-            OraStatLine(label: 'VERSION', value: '1.0.0'),
-          ]),
-        ],
+  Widget build(BuildContext context) {
+    final showIphoneSetup =
+        showIphoneShareSetup ?? isIphonePwaShareSetupAvailable;
+    return Scaffold(
+      appBar: AppBar(
+        title: const Text('SETTINGS'),
+        backgroundColor: OraColors.forest,
       ),
-    ),
-  );
+      body: SafeArea(
+        child: ListView(
+          padding: const EdgeInsets.all(20),
+          children: [
+            const OraScreenTitle(
+              title: 'SETTINGS',
+              subtitle: 'ORA - OTO RUNNERS ADVENTURE',
+              assetName: 'settings.png',
+            ),
+            const SizedBox(height: 18),
+            _settingsCard('ACCOUNT', 'you.png', [
+              Row(
+                children: [
+                  const Expanded(child: Text('NICKNAME')),
+                  Text(
+                    session.nickname,
+                    style: OraTextStyles.displaySmall.copyWith(
+                      color: OraColors.gold,
+                    ),
+                  ),
+                  const SizedBox(width: 4),
+                  IconButton(
+                    key: const Key('edit_nickname'),
+                    onPressed: () => _editNickname(context),
+                    tooltip: 'Edit nickname',
+                    visualDensity: VisualDensity.compact,
+                    icon: const Icon(Icons.edit, color: OraColors.gold),
+                  ),
+                ],
+              ),
+              OraStatLine(
+                label: 'DIVISION / GUILD',
+                value: session.divisionGuild,
+              ),
+              OraStatLine(label: 'ACCOUNT STATUS', value: session.status),
+            ]),
+            const SizedBox(height: 14),
+            FilledButton.icon(
+              key: const Key('logout_button'),
+              onPressed: onLogout,
+              icon: const Icon(Icons.logout),
+              label: const Text('LOGOUT'),
+            ),
+            const SizedBox(height: 14),
+            _settingsCard('RUN SETTINGS', 'location.png', const [
+              OraStatLine(
+                label: 'LOCATION / GPS',
+                value: 'REQUIRED WHILE RUNNING',
+              ),
+              OraStatLine(label: 'TRACKING', value: 'OFFLINE + RECOVERY'),
+            ]),
+            if (showIphoneSetup) ...[
+              const SizedBox(height: 14),
+              _settingsCard('IPHONE SHARE SETUP', 'adventure.png', [
+                const Text('Required once to share Strava activities to ORA'),
+                const SizedBox(height: 12),
+                FilledButton.icon(
+                  key: const Key('install_send_to_ora'),
+                  onPressed: () {
+                    unawaited(
+                      (onInstallIphoneShortcut ?? openIphonePwaShareShortcut)(),
+                    );
+                  },
+                  icon: const Icon(Icons.ios_share),
+                  label: const Text('INSTALL SEND TO ORA'),
+                ),
+              ]),
+            ],
+            const SizedBox(height: 14),
+            _settingsCard('DATA & SAFETY', 'lock.png', const [
+              OraStatLine(label: 'SESSION', value: 'SECURE ON THIS DEVICE'),
+              OraStatLine(label: 'ACTIVITY LOG', value: 'OWNER ISOLATED'),
+              OraStatLine(label: 'BACKEND', value: 'ORA LIVE DATA'),
+            ]),
+            const SizedBox(height: 14),
+            _settingsCard('ABOUT', 'adventure.png', const [
+              OraStatLine(label: 'ORA', value: 'OTO RUNNERS ADVENTURE'),
+              OraStatLine(label: 'PROGRAM', value: 'RUN PLAYING GAME'),
+              OraStatLine(label: 'VERSION', value: '1.0.0'),
+            ]),
+          ],
+        ),
+      ),
+    );
+  }
 
   Widget _settingsCard(String title, String icon, List<Widget> values) =>
       OraCard(
