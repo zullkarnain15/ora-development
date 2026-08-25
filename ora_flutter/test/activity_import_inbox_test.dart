@@ -56,6 +56,18 @@ void main() {
     expect(launch?.payload?.sharedUrl, 'https://strava.com/a/1');
   });
 
+  test('PWA share failure opens a visible Strava preview error', () {
+    final launch = ActivityImportLaunch.fromUri(
+      Uri.parse(
+        'https://example.com/ora/?share_target=1&share_error=read_failed',
+      ),
+    );
+
+    expect(launch?.hasRequest, isTrue);
+    expect(launch?.payload?.sourceHint, 'STRAVA');
+    expect(launch?.payload?.sharedText, 'STRAVA SHARE COULD NOT BE READ');
+  });
+
   test(
     'pending import survives recreation for login and reload resume',
     () async {

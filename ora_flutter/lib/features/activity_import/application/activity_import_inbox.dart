@@ -53,10 +53,16 @@ class ActivityImportLaunch {
     final title = _string(uri.queryParameters['title']);
     final text = _string(uri.queryParameters['text']);
     final url = _string(uri.queryParameters['url']);
-    final combinedText = [?title, ?text].join('\n');
+    final shareError = _string(uri.queryParameters['share_error']);
+    final combinedText = [
+      ?title,
+      ?text,
+      if (shareError != null) _webShareErrorText(shareError),
+    ].join('\n');
     final payload = ActivitySharePayload(
       sharedText: combinedText.isEmpty ? null : combinedText,
       sharedUrl: url,
+      sourceHint: shareError == null ? null : 'STRAVA',
       receivedAt: DateTime.now(),
     );
     if (token == null && !payload.hasData) return null;
@@ -71,6 +77,12 @@ class ActivityImportLaunch {
     final trimmed = value.trim();
     return trimmed.isEmpty ? null : trimmed;
   }
+
+  static String _webShareErrorText(String code) => switch (code) {
+    'too_large' => 'STRAVA IMAGE IS LARGER THAN 10 MB',
+    'empty' => 'STRAVA SHARE DID NOT INCLUDE AN IMAGE, TEXT, OR URL',
+    _ => 'STRAVA SHARE COULD NOT BE READ',
+  };
 }
 
 class ActivityImportInbox extends ChangeNotifier {
@@ -86,6 +98,7 @@ class ActivityImportInbox extends ChangeNotifier {
     final stored = await _store.load();
     if (stored != null) current = ActivityImportLaunch.fromJson(stored);
 
+    if (kIsWeb) startWebShareTargetListener(_receiveWebPayload);
     final webPayload = kIsWeb
         ? await readWebShareTargetPayload(Uri.base)
         : null;
@@ -116,6 +129,9 @@ class ActivityImportInbox extends ChangeNotifier {
     }
     if (!_disposed) notifyListeners();
   }
+
+  Future<void> _receiveWebPayload(ActivitySharePayload payload) =>
+      receive(ActivityImportLaunch(payload: payload));
 
   Future<void> clear() async {
     current = null;
@@ -161,7 +177,11 @@ class ActivityImportInbox extends ChangeNotifier {
   @override
   void dispose() {
     _disposed = true;
-    if (!kIsWeb) _channel.setMethodCallHandler(null);
+    if (kIsWeb) {
+      stopWebShareTargetListener();
+    } else {
+      _channel.setMethodCallHandler(null);
+    }
     super.dispose();
   }
 }

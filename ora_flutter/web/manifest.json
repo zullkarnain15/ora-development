@@ -5,6 +5,9 @@
     "start_url": ".",
     "scope": ".",
     "display": "standalone",
+    "launch_handler": {
+        "client_mode": "navigate-existing"
+    },
     "background_color": "#09150F",
     "theme_color": "#09150F",
     "description": "Train, quest, and track your run with ORA.",

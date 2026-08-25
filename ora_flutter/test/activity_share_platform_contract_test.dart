@@ -41,6 +41,10 @@ void main() {
     final imageTarget = files.single as Map<String, Object?>;
 
     expect(manifest['short_name'], 'ORA');
+    expect(
+      (manifest['launch_handler'] as Map<String, Object?>)['client_mode'],
+      'navigate-existing',
+    );
     expect(shareTarget['action'], './share-target');
     expect(shareTarget['method'], 'POST');
     expect(shareTarget['enctype'], 'multipart/form-data');
@@ -53,6 +57,8 @@ void main() {
     expect(bootstrap, contains('serviceWorkerUrl: `ora_service_worker.js'));
     expect(worker, contains("request.formData()"));
     expect(worker, contains("form.getAll('activity_images')"));
+    expect(worker, contains("type: 'ORA_ACTIVITY_SHARE'"));
+    expect(worker, contains('client.postMessage(message)'));
     expect(worker, contains("Response.redirect(destination.toString(), 303)"));
   });
 }

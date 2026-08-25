@@ -3,7 +3,7 @@
 const SHARE_CACHE = 'ora-share-target-v1';
 const SHARE_ROUTE = 'share-target';
 const PAYLOAD_ROUTE = '_ora_share_payload';
-const MAX_IMAGE_BYTES = 5 * 1024 * 1024;
+const MAX_IMAGE_BYTES = 10 * 1024 * 1024;
 const PAYLOAD_MAX_AGE_MS = 15 * 60 * 1000;
 
 self.addEventListener('install', () => self.skipWaiting());
@@ -44,9 +44,12 @@ async function receiveShare(request) {
     const title = cleanText(form.get('title'));
     const text = cleanText(form.get('text'));
     const url = cleanText(form.get('url'));
-    const image = form.getAll('activity_images').find(isAcceptedImage) || null;
+    const sharedImages = form.getAll('activity_images');
+    const image = sharedImages.find(isAcceptedImage) || null;
     if (!title && !text && !url && !image) {
-      return openOra({share_error: 'empty'});
+      const error = sharedImages.some(isOversizedImage) ? 'too_large' : 'empty';
+      await notifyClients({type: 'ORA_ACTIVITY_SHARE_ERROR', error});
+      return openOra({share_target: '1', share_error: error});
     }
 
     await removeExpiredPayloads();
@@ -85,9 +88,11 @@ async function receiveShare(request) {
         }),
       );
     }
+    await notifyClients({type: 'ORA_ACTIVITY_SHARE', shareId});
     return openOra({share_target: '1', share_id: shareId});
   } catch (_) {
-    return openOra({share_error: 'read_failed'});
+    await notifyClients({type: 'ORA_ACTIVITY_SHARE_ERROR', error: 'read_failed'});
+    return openOra({share_target: '1', share_error: 'read_failed'});
   }
 }
 
@@ -96,6 +101,10 @@ function isAcceptedImage(value) {
     value.size > 0 &&
     value.size <= MAX_IMAGE_BYTES &&
     (!value.type || value.type.startsWith('image/'));
+}
+
+function isOversizedImage(value) {
+  return value instanceof Blob && value.size > MAX_IMAGE_BYTES;
 }
 
 function cleanText(value) {
@@ -121,6 +130,14 @@ function openOra(parameters) {
     destination.searchParams.set(name, value);
   }
   return Response.redirect(destination.toString(), 303);
+}
+
+async function notifyClients(message) {
+  const windows = await self.clients.matchAll({
+    type: 'window',
+    includeUncontrolled: true,
+  });
+  for (const client of windows) client.postMessage(message);
 }
 
 async function readPayload(request) {

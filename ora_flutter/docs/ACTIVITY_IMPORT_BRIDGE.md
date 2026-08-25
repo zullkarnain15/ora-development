@@ -25,7 +25,7 @@ Parsing order is shared text, shared URL, then screenshot OCR fallback. ORA neve
 
 - iPhone Shortcut: `/#/import?t=<opaque-token>`.
 - Android PWA share target: multipart `POST` to `./share-target`. The ORA
-  service worker retains shared text, URL, and one image (maximum 5 MB), then
+  service worker retains shared text, URL, and one image (maximum 10 MB), then
   opens `./?share_target=1&share_id=...` for Activity Preview.
 - Android native: `ACTION_SEND` or `ACTION_SEND_MULTIPLE` through `ora/activity_share`.
 
@@ -42,8 +42,9 @@ Redeploy and authorize the Apps Script web app before publishing the official iP
 GitHub Pages remains static. Multipart shares are intercepted locally by
 `ora_service_worker.js`, stored briefly in a private Cache Storage entry, and
 consumed by Flutter without uploading the screenshot to GitHub Pages or the ORA
-backend. Entries expire after 15 minutes and are deleted after Flutter reads
-them. Android registers updated share MIME types when the PWA is installed, so
+backend. Entries become eligible for cleanup after 15 minutes. The worker also
+notifies an already-running ORA window, while `navigate-existing` makes a PWA
+launch navigate to the new share request. Android registers updated share MIME types when the PWA is installed, so
 an older ORA PWA must be uninstalled and installed again after this change.
 
 Feature rollback flags:
