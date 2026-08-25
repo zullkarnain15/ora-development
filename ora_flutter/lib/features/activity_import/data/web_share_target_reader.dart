@@ -10,3 +10,6 @@ void startWebShareTargetListener(
 ) => startPlatformWebShareTargetListener(onPayload);
 
 void stopWebShareTargetListener() => stopPlatformWebShareTargetListener();
+
+Future<void> discardWebShareTargetImage(String? transientImageId) =>
+    discardPlatformWebShareTargetImage(transientImageId);

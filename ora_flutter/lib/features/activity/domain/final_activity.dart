@@ -36,6 +36,9 @@ class FinalActivity {
     required this.activeDurationMillis,
     required this.averagePaceSecondsPerKm,
     required this.createdAtMillis,
+    this.source = 'ANDROID',
+    this.sourceRef,
+    this.sourceUrl,
     this.syncStatus = ActivitySyncStatus.pending,
   });
 
@@ -49,6 +52,9 @@ class FinalActivity {
   final int activeDurationMillis;
   final int? averagePaceSecondsPerKm;
   final int createdAtMillis;
+  final String source;
+  final String? sourceRef;
+  final String? sourceUrl;
   final ActivitySyncStatus syncStatus;
 
   FinalActivity withSyncStatus(ActivitySyncStatus value) => FinalActivity(
@@ -62,6 +68,9 @@ class FinalActivity {
     activeDurationMillis: activeDurationMillis,
     averagePaceSecondsPerKm: averagePaceSecondsPerKm,
     createdAtMillis: createdAtMillis,
+    source: source,
+    sourceRef: sourceRef,
+    sourceUrl: sourceUrl,
     syncStatus: value,
   );
 
@@ -81,6 +90,9 @@ class FinalActivity {
         ? averagePaceSecondsPerKm
         : null,
     'createdAtMillis': createdAtMillis,
+    'source': source,
+    'sourceRef': sourceRef,
+    'sourceUrl': sourceUrl,
     'syncStatus': syncStatus.value,
   };
 
@@ -91,22 +103,46 @@ class FinalActivity {
     'durationSec': activeDurationMillis / 1000.0,
     'distanceKm': distanceMeters / 1000.0,
     'avgPace': paceText(averagePaceSecondsPerKm),
+    'source': source,
+    'sourceRef': sourceRef,
+    'sourceUrl': sourceUrl,
     'deviceTime': isoOffset(deviceTime ?? DateTime.now()),
   };
 
-  factory FinalActivity.fromMap(Map<String, Object?> map) => FinalActivity(
-    activityId: map['activityId']! as String,
-    ownerNik: map['ownerNik']! as String,
-    nicknameSnapshot: map['nicknameSnapshot'] as String?,
-    divisionGuildSnapshot: map['divisionGuildSnapshot'] as String?,
-    startDateTimeMillis: (map['startDateTimeMillis']! as num).toInt(),
-    endDateTimeMillis: (map['endDateTimeMillis']! as num).toInt(),
-    distanceMeters: (map['distanceMeters']! as num).toDouble(),
-    activeDurationMillis: (map['activeDurationMillis']! as num).toInt(),
-    averagePaceSecondsPerKm: (map['averagePaceSecondsPerKm'] as num?)?.toInt(),
-    createdAtMillis: (map['createdAtMillis']! as num).toInt(),
-    syncStatus: ActivitySyncStatusValue.parse(map['syncStatus']! as String),
-  );
+  factory FinalActivity.fromMap(Map<String, Object?> map) {
+    final activityId = map['activityId']! as String;
+    return FinalActivity(
+      activityId: activityId,
+      ownerNik: map['ownerNik']! as String,
+      nicknameSnapshot: map['nicknameSnapshot'] as String?,
+      divisionGuildSnapshot: map['divisionGuildSnapshot'] as String?,
+      startDateTimeMillis: (map['startDateTimeMillis']! as num).toInt(),
+      endDateTimeMillis: (map['endDateTimeMillis']! as num).toInt(),
+      distanceMeters: (map['distanceMeters']! as num).toDouble(),
+      activeDurationMillis: (map['activeDurationMillis']! as num).toInt(),
+      averagePaceSecondsPerKm: (map['averagePaceSecondsPerKm'] as num?)
+          ?.toInt(),
+      createdAtMillis: (map['createdAtMillis']! as num).toInt(),
+      source:
+          _optionalText(map['source']) ?? inferredActivitySource(activityId),
+      sourceRef: _optionalText(map['sourceRef']),
+      sourceUrl: _optionalText(map['sourceUrl']),
+      syncStatus: ActivitySyncStatusValue.parse(map['syncStatus']! as String),
+    );
+  }
+}
+
+String inferredActivitySource(String activityId) {
+  final match = RegExp(
+    r'^import_([a-z]+)_',
+    caseSensitive: false,
+  ).firstMatch(activityId);
+  return match?.group(1)?.toUpperCase() ?? 'ANDROID';
+}
+
+String? _optionalText(Object? value) {
+  final text = value?.toString().trim();
+  return text == null || text.isEmpty ? null : text;
 }
 
 class ActivityTotals {

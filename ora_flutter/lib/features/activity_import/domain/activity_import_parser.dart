@@ -1,24 +1,33 @@
 import 'activity_import_models.dart';
 import 'activity_share_payload.dart';
+import 'activity_source_reference.dart';
 
 class ActivityImportParser {
   const ActivityImportParser();
 
   ActivityImportDraft parse(ActivitySharePayload payload) {
     final sharedText = payload.sharedText?.trim() ?? '';
-    final extractedUrl = _extractUrl(sharedText);
-    final sharedUrl = _nonEmpty(payload.sharedUrl) ?? extractedUrl;
+    final sharedUrls = _extractUrls(sharedText);
+    final sharedUrl = _preferredStravaUrl([
+      ?_nonEmpty(payload.sharedUrl),
+      ...sharedUrls,
+    ]);
     final source = _detectSource(payload.sourceHint, sharedText, sharedUrl);
     final distance = _parseDistance(sharedText);
     final duration = _parseDuration(sharedText);
     final detectedPace = _parsePace(sharedText);
     final start = _parseStartDateTime(sharedText);
+    final sourceReference = source == ActivityImportSource.strava
+        ? extractStravaSourceReference(sharedUrl)
+        : null;
     return ActivityImportDraft(
       source: source,
       payload: payload.copyWith(sharedUrl: sharedUrl),
       distanceMeters: distance,
       durationSeconds: duration,
       detectedPaceSecondsPerKm: detectedPace,
+      sourceRef: sourceReference?.ref,
+      sourceUrl: sourceReference?.url ?? sharedUrl,
       startDateTime: start,
       ocrFallbackRequired:
           (distance == null || duration == null || start == null) &&
@@ -139,10 +148,31 @@ class ActivityImportParser {
         : null;
   }
 
-  String? _extractUrl(String text) => RegExp(
-    r'https?://[^\s]+',
-    caseSensitive: false,
-  ).firstMatch(text)?.group(0)?.replaceAll(RegExp(r'[),.;]+$'), '');
+  List<String> _extractUrls(String text) =>
+      RegExp(r'https?://[^\s]+', caseSensitive: false)
+          .allMatches(text)
+          .map((match) {
+            return match.group(0)!.replaceAll(RegExp(r'[\]),.;]+$'), '');
+          })
+          .toList(growable: false);
+
+  String? _preferredStravaUrl(List<String> values) {
+    if (values.isEmpty) return null;
+    for (final value in values) {
+      final uri = Uri.tryParse(value);
+      if (uri != null &&
+          uri.pathSegments.any(
+            (segment) => segment.toLowerCase() == 'activities',
+          ) &&
+          extractStravaSourceReference(value) != null) {
+        return value;
+      }
+    }
+    for (final value in values) {
+      if (extractStravaSourceReference(value) != null) return value;
+    }
+    return values.first;
+  }
 
   String? _nonEmpty(String? value) {
     final trimmed = value?.trim();

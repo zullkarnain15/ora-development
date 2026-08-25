@@ -53,26 +53,24 @@ String? syncPayloadIneligibilityReason(ActivityUploadPayload payload) {
 }
 
 abstract final class ActivityPayloadMapper {
-  static const currentVersion = 1;
+  static const currentVersion = 2;
 
-  static ActivityUploadPayload mapV1(
+  static ActivityUploadPayload mapV2(
     FinalActivity activity, {
     required DateTime deviceTime,
   }) => ActivityUploadPayload(
     version: currentVersion,
     fields: {
       ...activity.toBackendJson(deviceTime: deviceTime),
-      'source': activitySourceFromId(activity.activityId),
+      'source': activity.source == 'ANDROID'
+          ? inferredActivitySource(activity.activityId)
+          : activity.source,
     },
   );
 }
 
 String activitySourceFromId(String activityId) {
-  final match = RegExp(
-    r'^import_([a-z]+)_',
-    caseSensitive: false,
-  ).firstMatch(activityId);
-  return match?.group(1)?.toUpperCase() ?? 'ANDROID';
+  return inferredActivitySource(activityId);
 }
 
 class SyncQueueEntry {

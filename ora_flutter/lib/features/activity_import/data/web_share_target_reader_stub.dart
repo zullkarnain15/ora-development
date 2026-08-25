@@ -9,3 +9,7 @@ void startPlatformWebShareTargetListener(
 ) {}
 
 void stopPlatformWebShareTargetListener() {}
+
+Future<void> discardPlatformWebShareTargetImage(
+  String? transientImageId,
+) async {}

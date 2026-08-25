@@ -36,7 +36,7 @@ class ProfileScreen extends StatefulWidget {
 
 class _ProfileScreenState extends State<ProfileScreen> {
   _AdventureLogFilter _activityFilter = _AdventureLogFilter.all;
-  _AdventureDateFilter _dateFilter = _AdventureDateFilter.last7Days;
+  _AdventureDateFilter _dateFilter = _AdventureDateFilter.allTime;
   DateTimeRange? _customDateRange;
 
   FeatureController get controller => widget.controller;

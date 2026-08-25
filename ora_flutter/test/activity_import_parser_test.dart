@@ -39,6 +39,32 @@ void main() {
     expect(result.source, ActivityImportSource.strava);
     expect(result.durationSeconds, 3486);
     expect(result.payload.sharedUrl, contains('strava.com'));
+    expect(result.sourceRef, '123');
+    expect(result.sourceUrl, 'https://www.strava.com/activities/123');
+  });
+
+  test('extracts SourceRef from a Strava app short link', () {
+    final result = parser.parse(
+      payload(
+        'Strava Morning Run\n5 km\n30:00',
+        url: 'https://strava.app.link/Full6cF8S5b',
+      ),
+    );
+
+    expect(result.sourceRef, 'Full6cF8S5b');
+    expect(result.sourceUrl, 'https://strava.app.link/Full6cF8S5b');
+  });
+
+  test('canonical activity URL takes priority over a Strava short link', () {
+    final result = parser.parse(
+      payload(
+        'Strava Morning Run\n5 km\n30:00\nhttps://www.strava.com/activities/987654',
+        url: 'https://strava.app.link/ShortCode',
+      ),
+    );
+
+    expect(result.sourceRef, '987654');
+    expect(result.sourceUrl, 'https://www.strava.com/activities/987654');
   });
 
   test('URL-only share never invents activity metrics', () {

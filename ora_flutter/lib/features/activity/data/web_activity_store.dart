@@ -593,7 +593,7 @@ class WebActivityStore implements ActivityStore {
   }
 
   static Map<String, Object?> _queueMap(FinalActivity activity) {
-    final payload = ActivityPayloadMapper.mapV1(
+    final payload = ActivityPayloadMapper.mapV2(
       activity,
       deviceTime: DateTime.fromMillisecondsSinceEpoch(activity.createdAtMillis),
     );

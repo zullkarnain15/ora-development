@@ -1,4 +1,3 @@
-import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 
 import '../../../core/theme/ora_theme.dart';
@@ -22,46 +21,28 @@ class ActivityImportScreen extends StatefulWidget {
 }
 
 class _ActivityImportScreenState extends State<ActivityImportScreen> {
-  final _distance = TextEditingController();
-  final _duration = TextEditingController();
-  final _sharedText = TextEditingController();
-  ActivityImportDraft? _hydratedDraft;
-
   ActivityImportController get controller => widget.controller;
 
   @override
   void initState() {
     super.initState();
     controller.addListener(_onControllerChanged);
-    _onControllerChanged();
   }
 
   @override
   void dispose() {
     controller.removeListener(_onControllerChanged);
-    _distance.dispose();
-    _duration.dispose();
-    _sharedText.dispose();
     super.dispose();
   }
 
   void _onControllerChanged() {
-    final draft = controller.draft;
-    if (draft != null && _hydratedDraft == null) {
-      _hydratedDraft = draft;
-      _distance.text = draft.distanceMeters == null
-          ? ''
-          : (draft.distanceMeters! / 1000).toStringAsFixed(2);
-      _duration.text = _durationText(draft.durationSeconds);
-      _sharedText.text = draft.payload.sharedText ?? '';
-    }
     if (mounted) setState(() {});
   }
 
   @override
   Widget build(BuildContext context) => Scaffold(
     appBar: AppBar(
-      title: const Text('IMPORT ACTIVITY'),
+      title: const Text('SHARED ACTIVITY'),
       backgroundColor: OraColors.forest,
       automaticallyImplyLeading: false,
     ),
@@ -73,7 +54,7 @@ class _ActivityImportScreenState extends State<ActivityImportScreen> {
       return const Center(
         child: OraStatusPanel(
           kind: OraPanelKind.loading,
-          message: 'READING ACTIVITY...',
+          message: 'READING SHARED ACTIVITY...',
         ),
       );
     }
@@ -89,7 +70,7 @@ class _ActivityImportScreenState extends State<ActivityImportScreen> {
                 const OraIcon('warning.png', size: 42),
                 const SizedBox(height: 14),
                 Text(
-                  controller.message ?? 'IMPORT FAILED',
+                  controller.message ?? 'SHARED ACTIVITY FAILED',
                   textAlign: TextAlign.center,
                 ),
                 const SizedBox(height: 16),
@@ -106,12 +87,13 @@ class _ActivityImportScreenState extends State<ActivityImportScreen> {
 
     final draft = controller.draft;
     if (draft == null) return const SizedBox.shrink();
+    final saved = controller.phase == ActivityImportPhase.saved;
     return ListView(
       padding: const EdgeInsets.all(20),
       children: [
         const OraScreenTitle(
-          title: 'ORA IMPORT',
-          subtitle: 'REVIEW BEFORE SAVING',
+          title: 'SHARED ACTIVITY',
+          subtitle: 'STRAVA ACTIVITY PREVIEW',
           assetName: 'adventure.png',
         ),
         const SizedBox(height: 16),
@@ -121,37 +103,37 @@ class _ActivityImportScreenState extends State<ActivityImportScreen> {
             children: [
               OraStatLine(label: 'SOURCE', value: draft.source.label),
               const SizedBox(height: 12),
-              TextField(
+              OraStatLine(
                 key: const Key('import_distance'),
-                controller: _distance,
-                keyboardType: const TextInputType.numberWithOptions(
-                  decimal: true,
-                ),
-                decoration: const InputDecoration(
-                  labelText: 'DISTANCE (KM)',
-                  helperText: 'REQUIRED',
-                ),
-                onChanged: controller.updateDistanceKm,
+                label: 'DISTANCE',
+                value: _distanceText(draft.distanceMeters),
               ),
               const SizedBox(height: 12),
-              TextField(
+              OraStatLine(
                 key: const Key('import_duration'),
-                controller: _duration,
-                keyboardType: TextInputType.datetime,
-                decoration: const InputDecoration(
-                  labelText: 'DURATION',
-                  hintText: '58:06 OR 01:02:03',
-                  helperText: 'MM:SS OR HH:MM:SS',
-                ),
-                onChanged: controller.updateDuration,
+                label: 'DURATION',
+                value: _durationText(draft.durationSeconds),
               ),
               const SizedBox(height: 12),
+              OraStatLine(
+                key: const Key('import_pace'),
+                label: 'PACE',
+                value: _paceText(draft.calculatedPaceSecondsPerKm),
+              ),
+              if (draft.detectedPaceSecondsPerKm != null) ...[
+                const SizedBox(height: 8),
+                OraStatLine(
+                  label: 'OCR PACE',
+                  value: _paceText(draft.detectedPaceSecondsPerKm),
+                ),
+              ],
+              const SizedBox(height: 18),
               Row(
                 children: [
                   Expanded(
                     child: OutlinedButton.icon(
                       key: const Key('import_date'),
-                      onPressed: () => _pickDate(draft),
+                      onPressed: saved ? null : () => _pickDate(draft),
                       icon: const Icon(Icons.calendar_today_outlined),
                       label: Text(_dateText(controller.selectedDate)),
                     ),
@@ -160,7 +142,7 @@ class _ActivityImportScreenState extends State<ActivityImportScreen> {
                   Expanded(
                     child: OutlinedButton.icon(
                       key: const Key('import_time'),
-                      onPressed: () => _pickTime(draft),
+                      onPressed: saved ? null : () => _pickTime(draft),
                       icon: const Icon(Icons.schedule),
                       label: Text(
                         _timeText(
@@ -172,141 +154,55 @@ class _ActivityImportScreenState extends State<ActivityImportScreen> {
                   ),
                 ],
               ),
-              const SizedBox(height: 14),
-              OraStatLine(
-                label: 'CALCULATED PACE',
-                value: _paceText(draft.calculatedPaceSecondsPerKm),
-              ),
-              if (draft.detectedPaceSecondsPerKm != null) ...[
-                const SizedBox(height: 8),
-                OraStatLine(
-                  label: 'PACE CHECK',
-                  value: draft.paceStatus == ActivityImportPaceStatus.verified
-                      ? 'VERIFIED'
-                      : 'REVIEW REQUIRED',
-                ),
-              ],
-              if (draft.possibleDuplicate) ...[
+              if (draft.sourceRef case final sourceRef?) ...[
                 const SizedBox(height: 12),
-                const _ImportWarning(
-                  message: 'POSSIBLE DUPLICATE - REVIEW BEFORE SAVING',
-                ),
-              ],
-            ],
-          ),
-        ),
-        const SizedBox(height: 14),
-        OraCard(
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              const OraScreenTitle(
-                title: 'SHARED DATA',
-                assetName: 'resume.png',
-              ),
-              const SizedBox(height: 12),
-              TextField(
-                key: const Key('import_shared_text'),
-                controller: _sharedText,
-                minLines: 3,
-                maxLines: 7,
-                decoration: const InputDecoration(
-                  labelText: 'TEXT FROM SHARE',
-                  hintText: 'PASTE STRAVA TEXT HERE',
-                ),
-              ),
-              const SizedBox(height: 10),
-              OutlinedButton.icon(
-                key: const Key('import_reparse'),
-                onPressed: () => controller.replaceSharedText(_sharedText.text),
-                icon: const Icon(Icons.auto_fix_high),
-                label: const Text('PARSE TEXT'),
-              ),
-              const SizedBox(height: 8),
-              OutlinedButton.icon(
-                key: const Key('import_screenshot'),
-                onPressed: _pickScreenshot,
-                icon: const Icon(Icons.add_photo_alternate_outlined),
-                label: Text(
-                  draft.payload.images.isEmpty
-                      ? 'SELECT SCREENSHOT'
-                      : 'SCREENSHOT SELECTED',
-                ),
-              ),
-              if (draft.payload.sharedUrl case final url?) ...[
-                const SizedBox(height: 10),
-                Text(
-                  url,
-                  maxLines: 2,
-                  overflow: TextOverflow.ellipsis,
-                  style: Theme.of(context).textTheme.bodySmall,
-                ),
+                OraStatLine(label: 'SOURCE REF', value: sourceRef),
               ],
             ],
           ),
         ),
         if (controller.message != null) ...[
           const SizedBox(height: 12),
-          _ImportWarning(message: controller.message!),
+          _ImportWarning(message: controller.message!, success: saved),
         ],
         const SizedBox(height: 16),
-        Row(
-          children: [
-            Expanded(
-              child: OutlinedButton(
-                key: const Key('import_decline'),
-                onPressed: controller.phase == ActivityImportPhase.saving
-                    ? null
-                    : _decline,
-                child: const Text('DECLINE'),
-              ),
-            ),
-            const SizedBox(width: 10),
-            Expanded(
-              child: FilledButton(
-                key: const Key('import_save'),
-                onPressed:
-                    draft.canSave &&
-                        controller.phase != ActivityImportPhase.saving
-                    ? _save
-                    : null,
-                child: Text(
-                  controller.phase == ActivityImportPhase.saving
-                      ? 'SAVING...'
-                      : 'SAVE ACTIVITY',
+        if (saved)
+          FilledButton(
+            key: const Key('import_done'),
+            onPressed: _done,
+            child: const Text('DONE'),
+          )
+        else
+          Row(
+            children: [
+              Expanded(
+                child: OutlinedButton(
+                  key: const Key('import_decline'),
+                  onPressed: controller.phase == ActivityImportPhase.saving
+                      ? null
+                      : _decline,
+                  child: const Text('DECLINE'),
                 ),
               ),
-            ),
-          ],
-        ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: FilledButton(
+                  key: const Key('import_save'),
+                  onPressed:
+                      draft.canSave &&
+                          controller.phase != ActivityImportPhase.saving
+                      ? _save
+                      : null,
+                  child: Text(
+                    controller.phase == ActivityImportPhase.saving
+                        ? 'SAVING...'
+                        : 'SAVE ACTIVITY',
+                  ),
+                ),
+              ),
+            ],
+          ),
       ],
-    );
-  }
-
-  Future<void> _pickScreenshot() async {
-    final result = await FilePicker.pickFiles(
-      type: FileType.image,
-      allowMultiple: false,
-      withData: true,
-    );
-    final file = result == null || result.files.isEmpty
-        ? null
-        : result.files.single;
-    final bytes = file?.bytes;
-    if (file == null || bytes == null) return;
-    if (bytes.lengthInBytes > 5 * 1024 * 1024) {
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('SCREENSHOT MUST BE 5 MB OR SMALLER')),
-      );
-      return;
-    }
-    await controller.addImage(
-      ActivityShareImage(
-        bytes: bytes,
-        mimeType: _imageMimeType(file.extension),
-        name: file.name,
-      ),
     );
   }
 
@@ -314,7 +210,7 @@ class _ActivityImportScreenState extends State<ActivityImportScreen> {
     final now = DateTime.now();
     final selected = await showDatePicker(
       context: context,
-      firstDate: DateTime(now.year - 2),
+      firstDate: DateTime(now.year - 10),
       lastDate: now,
       initialDate: controller.selectedDate ?? draft.startDateTime ?? now,
     );
@@ -335,7 +231,38 @@ class _ActivityImportScreenState extends State<ActivityImportScreen> {
   }
 
   Future<void> _save() async {
-    if (await controller.save() && mounted) widget.onClose();
+    final saved = await controller.save();
+    if (saved || !mounted) return;
+    final draft = controller.draft;
+    if (draft?.possibleDuplicate != true ||
+        draft?.possibleDuplicateConfirmed == true) {
+      return;
+    }
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('POSSIBLE DUPLICATE'),
+        content: const Text('POSSIBLE DUPLICATE – SAVE ANYWAY?'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('CANCEL'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text('SAVE ANYWAY'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true) return;
+    controller.confirmPossibleDuplicate();
+    await controller.save();
+  }
+
+  Future<void> _done() async {
+    await controller.finish();
+    if (mounted) widget.onClose();
   }
 
   Future<void> _decline() async {
@@ -345,24 +272,30 @@ class _ActivityImportScreenState extends State<ActivityImportScreen> {
 }
 
 class _ImportWarning extends StatelessWidget {
-  const _ImportWarning({required this.message});
+  const _ImportWarning({required this.message, this.success = false});
 
   final String message;
+  final bool success;
 
   @override
   Widget build(BuildContext context) => Container(
     padding: const EdgeInsets.all(11),
     decoration: BoxDecoration(
-      color: OraColors.orange.withValues(alpha: 0.12),
-      border: Border.all(color: OraColors.orange),
+      color: (success ? OraColors.success : OraColors.orange).withValues(
+        alpha: 0.12,
+      ),
+      border: Border.all(color: success ? OraColors.success : OraColors.orange),
       borderRadius: BorderRadius.circular(4),
     ),
     child: Text(message, textAlign: TextAlign.center),
   );
 }
 
+String _distanceText(double? meters) =>
+    meters == null ? '--.-- KM' : '${(meters / 1000).toStringAsFixed(2)} KM';
+
 String _durationText(int? seconds) {
-  if (seconds == null) return '';
+  if (seconds == null) return '--:--';
   final hours = seconds ~/ 3600;
   final minutes = (seconds % 3600) ~/ 60;
   final remainder = seconds % 60;
@@ -376,16 +309,9 @@ String _paceText(int? seconds) => seconds == null
     : '${(seconds ~/ 60).toString().padLeft(2, '0')}:${(seconds % 60).toString().padLeft(2, '0')} /KM';
 
 String _dateText(DateTime? value) => value == null
-    ? 'SELECT DATE'
+    ? 'ACTIVITY DATE'
     : '${value.day.toString().padLeft(2, '0')}/${value.month.toString().padLeft(2, '0')}/${value.year}';
 
 String _timeText(int? hour, int? minute) => hour == null || minute == null
     ? 'START TIME'
     : '${hour.toString().padLeft(2, '0')}:${minute.toString().padLeft(2, '0')}';
-
-String _imageMimeType(String? extension) => switch (extension?.toLowerCase()) {
-  'png' => 'image/png',
-  'webp' => 'image/webp',
-  'heic' || 'heif' => 'image/heic',
-  _ => 'image/jpeg',
-};

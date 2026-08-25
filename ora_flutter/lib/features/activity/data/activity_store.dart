@@ -66,7 +66,7 @@ abstract interface class ActivityStore {
 
 abstract final class ActivityDatabaseSchema {
   static const databaseName = 'ora.db';
-  static const currentVersion = 4;
+  static const currentVersion = 5;
   static const createActivitiesV1 = '''
 CREATE TABLE activities (
   activityId TEXT NOT NULL PRIMARY KEY,
@@ -79,6 +79,9 @@ CREATE TABLE activities (
   activeDurationMillis INTEGER NOT NULL,
   averagePaceSecondsPerKm INTEGER,
   createdAtMillis INTEGER NOT NULL,
+  source TEXT NOT NULL DEFAULT 'ANDROID',
+  sourceRef TEXT,
+  sourceUrl TEXT,
   syncStatus TEXT NOT NULL
 )''';
   static const createOwnerStartIndex =
@@ -200,6 +203,9 @@ CREATE TABLE IF NOT EXISTS sync_queue (
     if (oldVersion >= 3 && oldVersion < 4) {
       await _upgradeSyncV4(db);
     }
+    if (oldVersion < 5) {
+      await _upgradeActivitySourceV5(db);
+    }
   }
 
   static Future<void> _createTrackingV3(DatabaseExecutor db) async {
@@ -224,6 +230,20 @@ CREATE TABLE IF NOT EXISTS sync_queue (
       'ALTER TABLE sync_queue ADD COLUMN lastErrorCode TEXT',
     ]) {
       await db.execute(statement);
+    }
+  }
+
+  static Future<void> _upgradeActivitySourceV5(DatabaseExecutor db) async {
+    final columns = (await db.rawQuery('PRAGMA table_info(activities)'))
+        .map((row) => row['name']?.toString())
+        .whereType<String>()
+        .toSet();
+    for (final entry in const {
+      'source': "ALTER TABLE activities ADD COLUMN source TEXT NOT NULL DEFAULT 'ANDROID'",
+      'sourceRef': 'ALTER TABLE activities ADD COLUMN sourceRef TEXT',
+      'sourceUrl': 'ALTER TABLE activities ADD COLUMN sourceUrl TEXT',
+    }.entries) {
+      if (!columns.contains(entry.key)) await db.execute(entry.value);
     }
   }
 }
@@ -329,7 +349,7 @@ class SqfliteActivityStore implements ActivityStore {
         );
         if (activityRows.isEmpty) continue;
         final activity = FinalActivity.fromMap(activityRows.first);
-        final payload = ActivityPayloadMapper.mapV1(
+        final payload = ActivityPayloadMapper.mapV2(
           activity,
           deviceTime: DateTime.fromMillisecondsSinceEpoch(
             activity.createdAtMillis,
@@ -585,7 +605,7 @@ ORDER BY p.sequence ASC''',
     DatabaseExecutor db,
     FinalActivity activity,
   ) async {
-    final payload = ActivityPayloadMapper.mapV1(
+    final payload = ActivityPayloadMapper.mapV2(
       activity,
       deviceTime: DateTime.fromMillisecondsSinceEpoch(activity.createdAtMillis),
     );
@@ -992,6 +1012,9 @@ class MemoryActivityStore implements ActivityStore {
       activeDurationMillis: activity.activeDurationMillis,
       averagePaceSecondsPerKm: activity.averagePaceSecondsPerKm,
       createdAtMillis: activity.createdAtMillis,
+      source: activity.source,
+      sourceRef: activity.sourceRef,
+      sourceUrl: activity.sourceUrl,
       syncStatus: ActivitySyncStatus.synced,
     );
     return true;
@@ -1266,7 +1289,7 @@ class MemoryActivityStore implements ActivityStore {
   }
 
   void _enqueueMemory(FinalActivity activity) {
-    final payload = ActivityPayloadMapper.mapV1(
+    final payload = ActivityPayloadMapper.mapV2(
       activity,
       deviceTime: DateTime.fromMillisecondsSinceEpoch(activity.createdAtMillis),
     );

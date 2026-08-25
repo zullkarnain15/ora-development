@@ -248,7 +248,12 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
 
   void _handleBack() {
     if (showImport) {
-      unawaited(_importController?.decline());
+      final controller = _importController;
+      if (controller?.phase == ActivityImportPhase.saved) {
+        unawaited(controller?.finish());
+      } else {
+        unawaited(controller?.decline());
+      }
       _closeImport();
       return;
     }

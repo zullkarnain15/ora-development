@@ -26,8 +26,12 @@ class ActivityImportDraft {
     this.distanceMeters,
     this.durationSeconds,
     this.detectedPaceSecondsPerKm,
+    this.sourceRef,
+    this.sourceUrl,
     this.startDateTime,
+    this.exactDuplicate = false,
     this.possibleDuplicate = false,
+    this.possibleDuplicateConfirmed = false,
     this.ocrFallbackRequired = false,
   });
 
@@ -36,8 +40,12 @@ class ActivityImportDraft {
   final double? distanceMeters;
   final int? durationSeconds;
   final int? detectedPaceSecondsPerKm;
+  final String? sourceRef;
+  final String? sourceUrl;
   final DateTime? startDateTime;
+  final bool exactDuplicate;
   final bool possibleDuplicate;
+  final bool possibleDuplicateConfirmed;
   final bool ocrFallbackRequired;
 
   int? get startEpochSeconds {
@@ -78,22 +86,31 @@ class ActivityImportDraft {
     if (durationSeconds == null || durationSeconds! <= 0)
       ActivityImportErrorCode.invalidDuration,
     if (startDateTime == null) ActivityImportErrorCode.startTimeRequired,
+    if (source == ActivityImportSource.strava &&
+        (sourceRef == null || sourceRef!.trim().isEmpty))
+      ActivityImportErrorCode.noActivityData,
+    if (exactDuplicate) ActivityImportErrorCode.possibleDuplicate,
   };
 
   ActivityImportDraft copyWith({
     ActivityImportSource? source,
+    ActivitySharePayload? payload,
     double? distanceMeters,
     bool clearDistance = false,
     int? durationSeconds,
     bool clearDuration = false,
     int? detectedPaceSecondsPerKm,
+    String? sourceRef,
+    String? sourceUrl,
     DateTime? startDateTime,
     bool clearStartDateTime = false,
+    bool? exactDuplicate,
     bool? possibleDuplicate,
+    bool? possibleDuplicateConfirmed,
     bool? ocrFallbackRequired,
   }) => ActivityImportDraft(
     source: source ?? this.source,
-    payload: payload,
+    payload: payload ?? this.payload,
     distanceMeters: clearDistance
         ? null
         : distanceMeters ?? this.distanceMeters,
@@ -102,10 +119,15 @@ class ActivityImportDraft {
         : durationSeconds ?? this.durationSeconds,
     detectedPaceSecondsPerKm:
         detectedPaceSecondsPerKm ?? this.detectedPaceSecondsPerKm,
+    sourceRef: sourceRef ?? this.sourceRef,
+    sourceUrl: sourceUrl ?? this.sourceUrl,
     startDateTime: clearStartDateTime
         ? null
         : startDateTime ?? this.startDateTime,
+    exactDuplicate: exactDuplicate ?? this.exactDuplicate,
     possibleDuplicate: possibleDuplicate ?? this.possibleDuplicate,
+    possibleDuplicateConfirmed:
+        possibleDuplicateConfirmed ?? this.possibleDuplicateConfirmed,
     ocrFallbackRequired: ocrFallbackRequired ?? this.ocrFallbackRequired,
   );
 }

@@ -123,7 +123,7 @@ void main() {
     expect(
       await api.submitActivity(
         'fixture',
-        ActivityPayloadMapper.mapV1(
+        ActivityPayloadMapper.mapV2(
           activity,
           deviceTime: DateTime.fromMillisecondsSinceEpoch(2001),
         ),
@@ -204,7 +204,7 @@ void main() {
       'ANDROID',
     );
     expect(
-      ActivityPayloadMapper.mapV1(
+      ActivityPayloadMapper.mapV2(
         FinalActivity(
           activityId: 'import_strava_fixture',
           ownerNik: '1001',

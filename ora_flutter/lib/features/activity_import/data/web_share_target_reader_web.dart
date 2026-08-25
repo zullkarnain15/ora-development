@@ -56,12 +56,25 @@ Future<ActivitySharePayload?> _readPayload(Uri uri, String shareId) async {
       sharedUrl: sharedUrl,
       images: images,
       sourceHint: _string(decoded['sourceHint']),
+      transientImageId: shareId,
       receivedAt: receivedAt?.toLocal() ?? DateTime.now(),
     );
     if (!payload.hasData) return null;
     return payload;
   } on Object {
     return null;
+  }
+}
+
+Future<void> discardPlatformWebShareTargetImage(
+  String? transientImageId,
+) async {
+  final shareId = transientImageId?.trim();
+  if (shareId == null || !_validShareId.hasMatch(shareId)) return;
+  try {
+    await http.delete(Uri.base.resolve('_ora_share_payload/$shareId'));
+  } on Object {
+    // The service worker expiry cleanup remains the fallback.
   }
 }
 

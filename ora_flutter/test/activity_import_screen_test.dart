@@ -68,22 +68,17 @@ void main() {
     );
     await tester.pump();
 
-    expect(find.text('ORA IMPORT'), findsOneWidget);
+    expect(find.text('SHARED ACTIVITY'), findsNWidgets(2));
     expect(find.text('STRAVA'), findsOneWidget);
-    expect(
-      tester
-          .widget<TextField>(find.byKey(const Key('import_distance')))
-          .controller
-          ?.text,
-      '8.09',
-    );
-    expect(
-      tester
-          .widget<TextField>(find.byKey(const Key('import_duration')))
-          .controller
-          ?.text,
-      '58:06',
-    );
+    expect(find.text('8.09 KM'), findsOneWidget);
+    expect(find.text('58:06'), findsOneWidget);
+    expect(find.text('07:11 /KM'), findsOneWidget);
+    expect(find.byType(TextField), findsNothing);
+    expect(find.byKey(const Key('import_reparse')), findsNothing);
+    expect(find.byKey(const Key('import_screenshot')), findsNothing);
+    controller.updateDate(DateTime(2026, 8, 25));
+    controller.updateTime(6, 10);
+    await tester.pump();
     await tester.drag(find.byType(ListView), const Offset(0, -900));
     await tester.pumpAndSettle();
     expect(
@@ -100,7 +95,7 @@ void main() {
   });
 
   test('date and time must both be explicitly selected', () async {
-    final controller = createController('5 km\n30:00');
+    final controller = createController('Strava\n5 km\n30:00');
     await controller.initialize();
     controller.updateDate(DateTime(2026, 8, 25));
 

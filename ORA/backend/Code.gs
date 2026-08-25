@@ -100,6 +100,8 @@ const ORA_HEADERS = Object.freeze({
     'SyncedAt',
     'CreatedAt',
     'UpdatedAt',
+    'SourceRef',
+    'SourceUrl',
   ],
   User_Stats: [
     'NIK',
@@ -771,6 +773,10 @@ function handleSubmitActivity_(request) {
   const distanceKm = Number(activity.distanceKm);
   const avgPace = String(activity.avgPace == null ? '' : activity.avgPace).trim();
   const source = normalizeImportActivitySource_(activity.source);
+  const sourceUrl = String(activity.sourceUrl == null ? '' : activity.sourceUrl).trim();
+  const sourceRef = String(
+    activity.sourceRef == null ? extractActivitySourceRef_(source, sourceUrl) : activity.sourceRef
+  ).trim();
   const deviceTime = String(activity.deviceTime == null ? '' : activity.deviceTime).trim();
 
   if (!activityId) {
@@ -807,6 +813,16 @@ function handleSubmitActivity_(request) {
     }
 
     const sheet = getActivitiesSheet_();
+    if (
+      sourceRef &&
+      findActivityByNikSourceAndRef_(sheet, participant.nik, source, sourceRef)
+    ) {
+      return jsonSuccess_({
+        status: 'DUPLICATE',
+        activityId: activityId,
+        message: 'Activity source already synced',
+      });
+    }
     if (findActivityByNikAndActivityId_(sheet, participant.nik, activityId)) {
       return jsonSuccess_({
         status: 'DUPLICATE',
@@ -826,6 +842,8 @@ function handleSubmitActivity_(request) {
       distanceKm: distanceKm,
       avgPace: avgPace,
       source: source,
+      sourceRef: sourceRef,
+      sourceUrl: sourceUrl,
       deviceTime: deviceTime,
     });
 
@@ -1029,6 +1047,8 @@ function mapActivityHistoryRowsForNik_(rows, nik) {
       avgPace: String(row.AvgPace || '').trim(),
       status: 'COMPLETED',
       source: String(row.Source || '').trim(),
+      sourceRef: String(row.SourceRef || '').trim(),
+      sourceUrl: String(row.SourceUrl || '').trim(),
       syncedAt: syncedAt ? syncedAt.toISOString() : null,
       activityTimeMillis: activityTime.getTime(),
     };
@@ -2277,6 +2297,36 @@ function findActivityByNikAndActivityId_(sheet, nik, activityId) {
   return null;
 }
 
+function findActivityByNikSourceAndRef_(sheet, nik, source, sourceRef) {
+  const values = sheet.getDataRange().getDisplayValues();
+  if (values.length < 2) return null;
+
+  const headerMap = createHeaderMap_(values[0]);
+  if (headerMap.SourceRef == null || headerMap.SourceUrl == null) return null;
+  const targetNik = normalizeDigits_(nik);
+  const targetSource = normalizeImportActivitySource_(source);
+  const targetRef = String(sourceRef == null ? '' : sourceRef).trim();
+  if (!targetRef) return null;
+
+  for (let index = 1; index < values.length; index += 1) {
+    const row = values[index];
+    if (
+      normalizeDigits_(row[headerMap.NIK]) === targetNik &&
+      normalizeImportActivitySource_(row[headerMap.Source]) === targetSource &&
+      String(row[headerMap.SourceRef] || '').trim() === targetRef
+    ) {
+      return {
+        rowNumber: index + 1,
+        activityId: String(row[headerMap.ActivityId] || '').trim(),
+        nik: targetNik,
+        source: targetSource,
+        sourceRef: targetRef,
+      };
+    }
+  }
+  return null;
+}
+
 function appendActivity_(sheet, activity) {
   const now = new Date();
   const nextRow = sheet.getLastRow() + 1;
@@ -2296,6 +2346,8 @@ function appendActivity_(sheet, activity) {
     now,
     now,
     now,
+    String(activity.sourceRef || ''),
+    String(activity.sourceUrl || ''),
   ]];
 
   sheet.getRange(nextRow, 1, 1, 2).setNumberFormat('@');
@@ -2316,6 +2368,16 @@ function normalizeImportActivitySource_(value) {
     'ANDROID',
     'WEB',
   ].indexOf(source) >= 0 ? source : 'ANDROID';
+}
+
+function extractActivitySourceRef_(source, sourceUrl) {
+  if (normalizeImportActivitySource_(source) !== 'STRAVA') return '';
+  const value = String(sourceUrl == null ? '' : sourceUrl).trim();
+  if (!value) return '';
+  const canonical = value.match(/\/activities\/([^/?#]+)/i);
+  if (canonical && canonical[1]) return decodeURIComponent(canonical[1]);
+  const shortLink = value.match(/^https?:\/\/(?:[^/]+\.)?strava\.app\.link\/([^?#/]+)(?:[/?#]|$)/i);
+  return shortLink && shortLink[1] ? decodeURIComponent(shortLink[1]) : '';
 }
 
 function ensureUserStatsSheet_() {
@@ -3469,6 +3531,7 @@ function setupBackend1() {
     spreadsheet.getId()
   );
 
+  ensureActivitySourceColumns_();
   ensureUserStatsSheet_();
   ensureQuestClaimsSheet_();
   ensureGuildMasterSheet_();
@@ -3494,6 +3557,28 @@ function setupBackend1() {
 
   console.log(JSON.stringify(summary, null, 2));
   return summary;
+}
+
+function ensureActivitySourceColumns_() {
+  const spreadsheet = getOraSpreadsheet_();
+  const sheet = spreadsheet.getSheetByName(ORA_SHEETS.ACTIVITIES);
+  if (!sheet) {
+    throw oraError_('SHEET_NOT_FOUND', 'Sheet Activities tidak ditemukan.');
+  }
+  const current = sheet.getRange(1, 16, 1, 2).getDisplayValues()[0];
+  const expected = ['SourceRef', 'SourceUrl'];
+  expected.forEach(function (header, index) {
+    const existing = String(current[index] || '').trim();
+    if (existing && existing !== header) {
+      throw oraError_(
+        'INVALID_SHEET_SCHEMA',
+        'Kolom ' + String.fromCharCode(80 + index) + ' Activities harus ' + header + '.'
+      );
+    }
+  });
+  sheet.getRange(1, 16, 1, 2).setValues([expected]);
+  sheet.getRange(1, 16, 1, 2).setFontWeight('bold');
+  sheet.getRange('P:Q').setNumberFormat('@');
 }
 
 /**
@@ -5013,6 +5098,43 @@ function assertAttendanceConfigError_(callback, message) {
 
 function assertBackendTest_(condition, message) {
   if (!condition) throw new Error('Backend-3 test failed: ' + message);
+}
+
+function testSharedActivityImportFoundation() {
+  assertBackendTest_(
+    ORA_HEADERS.Activities[15] === 'SourceRef' &&
+      ORA_HEADERS.Activities[16] === 'SourceUrl',
+    'SourceRef dan SourceUrl harus tetap berada di kolom P dan Q.'
+  );
+  assertBackendTest_(
+    extractActivitySourceRef_('STRAVA', 'https://www.strava.com/activities/123456?x=1') === '123456',
+    'Canonical Strava activity ID tidak terbaca.'
+  );
+  assertBackendTest_(
+    extractActivitySourceRef_('STRAVA', 'https://strava.app.link/Full6cF8S5b') === 'Full6cF8S5b',
+    'Kode Strava short link tidak terbaca.'
+  );
+  const legacy = mapActivityHistoryRowsForNik_([{
+    ActivityId: 'LEGACY-1',
+    NIK: '1001',
+    StartTime: new Date('2026-08-25T00:00:00.000Z'),
+    EndTime: new Date('2026-08-25T00:30:00.000Z'),
+    DurationSec: 1800,
+    DistanceKm: 5,
+    AvgPace: '06:00',
+    Status: 'COMPLETED',
+    Source: 'ANDROID',
+  }], '1001');
+  assertBackendTest_(
+    legacy.length === 1 && legacy[0].sourceRef === '' && legacy[0].sourceUrl === '',
+    'Activity lama tanpa SourceRef/SourceUrl harus tetap valid.'
+  );
+  return {
+    headers: true,
+    canonicalSourceRef: true,
+    shortSourceRef: true,
+    legacyActivity: true,
+  };
 }
 
 /**

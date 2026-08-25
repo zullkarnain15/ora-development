@@ -108,6 +108,53 @@ Future<FinalActivity> _finalizeSyncedRun(
 }
 
 void main() {
+  test('activity model persists source reference and URL', () {
+    final activity = FinalActivity(
+      activityId: 'import_strava_ref',
+      ownerNik: '1001',
+      nicknameSnapshot: 'RUNNER',
+      divisionGuildSnapshot: 'OPS',
+      startDateTimeMillis: 1000,
+      endDateTimeMillis: 61000,
+      distanceMeters: 1000,
+      activeDurationMillis: 60000,
+      averagePaceSecondsPerKm: 60,
+      createdAtMillis: 61000,
+      source: 'STRAVA',
+      sourceRef: 'Full6cF8S5b',
+      sourceUrl: 'https://strava.app.link/Full6cF8S5b',
+    );
+
+    final restored = FinalActivity.fromMap(activity.toMap());
+
+    expect(restored.source, 'STRAVA');
+    expect(restored.sourceRef, 'Full6cF8S5b');
+    expect(restored.sourceUrl, 'https://strava.app.link/Full6cF8S5b');
+    expect(activity.toBackendJson()['sourceRef'], 'Full6cF8S5b');
+    expect(
+      activity.toBackendJson()['sourceUrl'],
+      'https://strava.app.link/Full6cF8S5b',
+    );
+  });
+
+  test('legacy activity maps remain valid without source columns', () {
+    final legacy =
+        _activity(
+            id: 'import_strava_legacy',
+            owner: '1001',
+            start: 1000,
+          ).toMap()
+          ..remove('source')
+          ..remove('sourceRef')
+          ..remove('sourceUrl');
+
+    final restored = FinalActivity.fromMap(legacy);
+
+    expect(restored.source, 'STRAVA');
+    expect(restored.sourceRef, isNull);
+    expect(restored.sourceUrl, isNull);
+  });
+
   group('owner-scoped activity repository', () {
     test('isolates owners, sorts newest first, and aggregates', () async {
       final store = MemoryActivityStore();
@@ -289,77 +336,98 @@ void main() {
     });
   });
 
-  test('Android ora.db version 1 fixture upgrades to sync schema version 4 without data loss', () async {
-    sqfliteFfiInit();
-    final factory = databaseFactoryFfi;
-    final directory = await Directory.systemTemp.createTemp(
-      'ora_db_migration_',
-    );
-    final databasePath = path.join(directory.path, 'ora.db');
-    try {
-      var database = await factory.openDatabase(
-        databasePath,
-        options: OpenDatabaseOptions(
-          version: 1,
-          onCreate: (db, _) async {
-            await db.execute(ActivityDatabaseSchema.createActivitiesV1);
-            await db.execute(ActivityDatabaseSchema.createOwnerStartIndex);
-            await db.execute(ActivityDatabaseSchema.createOwnerCreatedIndex);
-          },
-        ),
+  test(
+    'Android ora.db version 1 fixture upgrades to version 5 without data loss',
+    () async {
+      sqfliteFfiInit();
+      final factory = databaseFactoryFfi;
+      final directory = await Directory.systemTemp.createTemp(
+        'ora_db_migration_',
       );
-      await database.insert(
-        'activities',
-        _activity(id: 'ANDROID-V1', owner: '1001', start: 10).toMap(),
-      );
-      await database.close();
+      final databasePath = path.join(directory.path, 'ora.db');
+      try {
+        var database = await factory.openDatabase(
+          databasePath,
+          options: OpenDatabaseOptions(
+            version: 1,
+            onCreate: (db, _) async {
+              await db.execute('''
+CREATE TABLE activities (
+  activityId TEXT NOT NULL PRIMARY KEY,
+  ownerNik TEXT NOT NULL,
+  nicknameSnapshot TEXT,
+  divisionGuildSnapshot TEXT,
+  startDateTimeMillis INTEGER NOT NULL,
+  endDateTimeMillis INTEGER NOT NULL,
+  distanceMeters REAL NOT NULL,
+  activeDurationMillis INTEGER NOT NULL,
+  averagePaceSecondsPerKm INTEGER,
+  createdAtMillis INTEGER NOT NULL,
+  syncStatus TEXT NOT NULL
+)''');
+              await db.execute(ActivityDatabaseSchema.createOwnerStartIndex);
+              await db.execute(ActivityDatabaseSchema.createOwnerCreatedIndex);
+            },
+          ),
+        );
+        final legacyRow =
+            _activity(id: 'ANDROID-V1', owner: '1001', start: 10).toMap()
+              ..remove('source')
+              ..remove('sourceRef')
+              ..remove('sourceUrl');
+        await database.insert('activities', legacyRow);
+        await database.close();
 
-      database = await factory.openDatabase(
-        databasePath,
-        options: OpenDatabaseOptions(
-          version: ActivityDatabaseSchema.currentVersion,
-          onUpgrade: ActivityDatabaseSchema.upgrade,
-        ),
-      );
-      final activityRows = await database.query('activities');
-      final metadata = await database.query('schema_metadata');
-      final tables = await database.rawQuery(
-        "SELECT name FROM sqlite_master WHERE type = 'table'",
-      );
-      expect(activityRows.single['activityId'], 'ANDROID-V1');
-      expect(
-        metadata.singleWhere((row) => row['key'] == 'migrated_from')['value'],
-        'android_v1',
-      );
-      final syncColumns = await database.rawQuery(
-        'PRAGMA table_info(sync_queue)',
-      );
-      expect(
-        syncColumns.map((row) => row['name']),
-        containsAll([
-          'retryCount',
-          'payloadVersion',
-          'payloadJson',
-          'nextAttemptAtMillis',
-          'serverStatus',
-          'serverAckAtMillis',
-          'lastErrorCode',
-        ]),
-      );
-      expect(
-        tables.map((row) => row['name']),
-        containsAll([
-          'run_sessions',
-          'location_points',
-          'run_events',
-          'sync_queue',
-        ]),
-      );
-      await database.close();
-    } finally {
-      await directory.delete(recursive: true);
-    }
-  });
+        database = await factory.openDatabase(
+          databasePath,
+          options: OpenDatabaseOptions(
+            version: ActivityDatabaseSchema.currentVersion,
+            onUpgrade: ActivityDatabaseSchema.upgrade,
+          ),
+        );
+        final activityRows = await database.query('activities');
+        final metadata = await database.query('schema_metadata');
+        final tables = await database.rawQuery(
+          "SELECT name FROM sqlite_master WHERE type = 'table'",
+        );
+        expect(activityRows.single['activityId'], 'ANDROID-V1');
+        expect(activityRows.single['source'], 'ANDROID');
+        expect(activityRows.single['sourceRef'], isNull);
+        expect(activityRows.single['sourceUrl'], isNull);
+        expect(
+          metadata.singleWhere((row) => row['key'] == 'migrated_from')['value'],
+          'android_v1',
+        );
+        final syncColumns = await database.rawQuery(
+          'PRAGMA table_info(sync_queue)',
+        );
+        expect(
+          syncColumns.map((row) => row['name']),
+          containsAll([
+            'retryCount',
+            'payloadVersion',
+            'payloadJson',
+            'nextAttemptAtMillis',
+            'serverStatus',
+            'serverAckAtMillis',
+            'lastErrorCode',
+          ]),
+        );
+        expect(
+          tables.map((row) => row['name']),
+          containsAll([
+            'run_sessions',
+            'location_points',
+            'run_events',
+            'sync_queue',
+          ]),
+        );
+        await database.close();
+      } finally {
+        await directory.delete(recursive: true);
+      }
+    },
+  );
 
   test(
     'Android SQLite removeLocalData clears synced route child rows',

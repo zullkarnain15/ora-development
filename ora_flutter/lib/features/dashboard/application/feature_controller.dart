@@ -11,6 +11,8 @@ import '../../auth/domain/auth_models.dart';
 import '../data/ora_feature_api.dart';
 import '../domain/feature_models.dart';
 
+enum ImportedActivitySaveOutcome { duplicate, synced, pending }
+
 typedef FeatureControllerFactory = FeatureController Function(
   UserSession session,
 );
@@ -342,12 +344,34 @@ class FeatureController extends ChangeNotifier {
   }
 
   Future<bool> saveImportedActivity(FinalActivity activity) async {
-    if (activity.ownerNik != session.nik) return false;
+    final outcome = await saveAndSyncImportedActivity(activity);
+    return outcome != ImportedActivitySaveOutcome.duplicate;
+  }
+
+  Future<ImportedActivitySaveOutcome> saveAndSyncImportedActivity(
+    FinalActivity activity,
+  ) async {
+    if (activity.ownerNik != session.nik) {
+      return ImportedActivitySaveOutcome.duplicate;
+    }
     final inserted = await activityStore.insert(activity);
-    if (!inserted) return false;
-    await loadActivities(force: true);
+    if (!inserted) return ImportedActivitySaveOutcome.duplicate;
     await syncPending(manual: false);
-    return true;
+    await Future.wait([
+      loadActivities(force: true),
+      loadStats(force: true),
+      loadQuests(force: true),
+    ]);
+    FinalActivity? stored;
+    for (final item in await activityStore.newestFirst(session.nik)) {
+      if (item.activityId == activity.activityId) {
+        stored = item;
+        break;
+      }
+    }
+    return stored?.syncStatus == ActivitySyncStatus.synced
+        ? ImportedActivitySaveOutcome.synced
+        : ImportedActivitySaveOutcome.pending;
   }
 
   Future<bool> deleteNotEligibleActivity(String activityId) async {

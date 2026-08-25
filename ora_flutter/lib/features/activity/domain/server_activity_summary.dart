@@ -10,6 +10,8 @@ class ServerActivitySummary {
     required this.averagePaceSecondsPerKm,
     required this.status,
     required this.source,
+    this.sourceRef,
+    this.sourceUrl,
     required this.syncedAt,
   });
 
@@ -21,6 +23,8 @@ class ServerActivitySummary {
   final int? averagePaceSecondsPerKm;
   final String status;
   final String source;
+  final String? sourceRef;
+  final String? sourceUrl;
   final DateTime? syncedAt;
 
   factory ServerActivitySummary.fromJson(Map<String, Object?> json) {
@@ -44,6 +48,8 @@ class ServerActivitySummary {
       averagePaceSecondsPerKm: _parsePace(json['avgPace']),
       status: _optionalString(json['status']) ?? 'COMPLETED',
       source: _optionalString(json['source']) ?? '',
+      sourceRef: _optionalString(json['sourceRef']),
+      sourceUrl: _optionalString(json['sourceUrl']),
       syncedAt: syncedAtText == null ? null : DateTime.parse(syncedAtText),
     );
   }
@@ -60,6 +66,9 @@ class ServerActivitySummary {
     averagePaceSecondsPerKm: averagePaceSecondsPerKm,
     createdAtMillis:
         syncedAt?.millisecondsSinceEpoch ?? endTime.millisecondsSinceEpoch,
+    source: source.isEmpty ? inferredActivitySource(activityId) : source,
+    sourceRef: sourceRef,
+    sourceUrl: sourceUrl,
     syncStatus: ActivitySyncStatus.synced,
   );
 }

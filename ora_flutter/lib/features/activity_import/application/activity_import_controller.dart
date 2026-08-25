@@ -6,6 +6,7 @@ import '../../../core/network/apps_script_client.dart';
 import '../../activity/domain/final_activity.dart';
 import '../../dashboard/application/feature_controller.dart';
 import '../data/activity_import_bridge_api.dart';
+import '../data/activity_ocr_engine.dart';
 import '../domain/activity_import_models.dart';
 import '../domain/activity_import_parser.dart';
 import '../domain/activity_share_payload.dart';
@@ -20,14 +21,17 @@ class ActivityImportController extends ChangeNotifier {
     required this.bridgeApi,
     required this.featureController,
     this.parser = const ActivityImportParser(),
+    ActivityOcrEngine? ocrEngine,
     DateTime Function()? clock,
-  }) : _clock = clock ?? DateTime.now;
+  }) : ocrEngine = ocrEngine ?? createActivityOcrEngine(),
+       _clock = clock ?? DateTime.now;
 
-  final ActivityImportLaunch launch;
+  ActivityImportLaunch launch;
   final ActivityImportInbox inbox;
   final ActivityImportBridgeApi bridgeApi;
   final FeatureController featureController;
   final ActivityImportParser parser;
+  final ActivityOcrEngine ocrEngine;
   final DateTime Function() _clock;
 
   ActivityImportPhase phase = ActivityImportPhase.reading;
@@ -38,6 +42,7 @@ class ActivityImportController extends ChangeNotifier {
   int? _selectedHour;
   int? _selectedMinute;
   bool _disposed = false;
+  bool _ocrMetricsRead = false;
 
   DateTime? get selectedDate => _selectedDate;
   int? get selectedHour => _selectedHour;
@@ -57,19 +62,47 @@ class ActivityImportController extends ChangeNotifier {
         _fail(ActivityImportErrorCode.noSharedData);
         return;
       }
-      var parsed = parser.parse(payload);
-      parsed = parsed.copyWith(
-        possibleDuplicate: await _isPossibleDuplicate(parsed),
-      );
-      _adoptParsedStart(parsed.startDateTime);
+      String? ocrText;
+      if (payload.images.isNotEmpty) {
+        try {
+          ocrText = await ocrEngine.recognize(payload.images.first);
+        } on Object {
+          ocrText = null;
+        } finally {
+          payload = await inbox.releaseImages(payload);
+          launch = ActivityImportLaunch(token: token, payload: payload);
+        }
+      }
+      final mergedText = [
+        if (ocrText?.trim().isNotEmpty == true) ocrText!.trim(),
+        if (payload.sharedText?.trim().isNotEmpty == true)
+          payload.sharedText!.trim(),
+      ].join('\n');
+      if (mergedText.isNotEmpty) {
+        payload = payload.copyWith(sharedText: mergedText);
+      }
+      var parsed = parser
+          .parse(payload)
+          .copyWith(clearStartDateTime: true, ocrFallbackRequired: false);
+      _ocrMetricsRead =
+          parsed.distanceMeters != null && parsed.durationSeconds != null;
+      await featureController.loadActivities(force: true);
+      parsed = await _withDuplicateState(parsed);
       draft = parsed;
       phase = ActivityImportPhase.preview;
-      if (parsed.ocrFallbackRequired) {
-        errorCode = ActivityImportErrorCode.ocrNotAvailable;
-        message = 'OCR NOT AVAILABLE - REVIEW THE FIELDS MANUALLY';
+      if (!_ocrMetricsRead) {
+        errorCode = ActivityImportErrorCode.ocrFailed;
+        message = 'ACTIVITY DATA COULD NOT BE READ – SHARE AGAIN FROM STRAVA';
+      } else if (parsed.exactDuplicate) {
+        errorCode = ActivityImportErrorCode.possibleDuplicate;
+        message = 'DUPLICATE ACTIVITY – ALREADY SAVED';
+      } else if (parsed.source == ActivityImportSource.strava &&
+          (parsed.sourceRef == null || parsed.sourceRef!.trim().isEmpty)) {
+        errorCode = ActivityImportErrorCode.noActivityData;
+        message = 'ACTIVITY SOURCE COULD NOT BE READ – SHARE AGAIN FROM STRAVA';
       } else if (!parsed.canSave) {
         errorCode = ActivityImportErrorCode.partialData;
-        message = 'COMPLETE THE REQUIRED FIELDS';
+        message = 'SELECT ACTIVITY DATE AND START TIME';
       }
       _safeNotify();
     } on BackendFailure catch (error) {
@@ -77,58 +110,6 @@ class ActivityImportController extends ChangeNotifier {
     } on Object {
       _fail(ActivityImportErrorCode.backendError);
     }
-  }
-
-  Future<void> replaceSharedText(String value) async {
-    final current = draft?.payload ?? launch.payload;
-    final payload = (current ?? ActivitySharePayload(receivedAt: _clock()))
-        .copyWith(sharedText: value);
-    var parsed = parser.parse(payload);
-    parsed = parsed.copyWith(
-      startDateTime: draft?.startDateTime,
-      distanceMeters: parsed.distanceMeters ?? draft?.distanceMeters,
-      durationSeconds: parsed.durationSeconds ?? draft?.durationSeconds,
-      possibleDuplicate: await _isPossibleDuplicate(parsed),
-    );
-    _adoptParsedStart(parsed.startDateTime);
-    draft = parsed;
-    _refreshPreviewMessage();
-  }
-
-  Future<void> addImage(ActivityShareImage image) async {
-    final current = draft?.payload ?? launch.payload;
-    final payload = (current ?? ActivitySharePayload(receivedAt: _clock()))
-        .copyWith(images: [image]);
-    draft = parser
-        .parse(payload)
-        .copyWith(
-          distanceMeters: draft?.distanceMeters,
-          durationSeconds: draft?.durationSeconds,
-          startDateTime: draft?.startDateTime,
-          ocrFallbackRequired: true,
-        );
-    errorCode = ActivityImportErrorCode.ocrNotAvailable;
-    message = 'SCREENSHOT ADDED - REVIEW THE FIELDS MANUALLY';
-    phase = ActivityImportPhase.preview;
-    _safeNotify();
-  }
-
-  void updateDistanceKm(String value) {
-    final parsed = double.tryParse(value.trim().replaceAll(',', '.'));
-    draft = draft?.copyWith(
-      distanceMeters: parsed == null ? null : parsed * 1000,
-      clearDistance: parsed == null,
-    );
-    _refreshPreviewMessage();
-  }
-
-  void updateDuration(String value) {
-    final parsed = parseEditableDuration(value);
-    draft = draft?.copyWith(
-      durationSeconds: parsed,
-      clearDuration: parsed == null,
-    );
-    _refreshPreviewMessage();
   }
 
   void updateDate(DateTime value) {
@@ -142,13 +123,6 @@ class ActivityImportController extends ChangeNotifier {
     _selectedMinute = minute;
     _composeSelectedStart();
     _refreshPreviewMessage();
-  }
-
-  void _adoptParsedStart(DateTime? value) {
-    if (value == null) return;
-    _selectedDate = DateTime(value.year, value.month, value.day);
-    _selectedHour = value.hour;
-    _selectedMinute = value.minute;
   }
 
   void _composeSelectedStart() {
@@ -165,11 +139,29 @@ class ActivityImportController extends ChangeNotifier {
   }
 
   Future<bool> save() async {
-    final value = draft;
+    var value = draft;
+    if (value != null) {
+      value = await _withDuplicateState(value);
+      draft = value;
+    }
     if (value == null ||
+        !_ocrMetricsRead ||
         !value.canSave ||
         phase == ActivityImportPhase.saving) {
       _refreshPreviewMessage();
+      return false;
+    }
+    if (value.possibleDuplicate && !value.possibleDuplicateConfirmed) {
+      errorCode = ActivityImportErrorCode.possibleDuplicate;
+      message = 'POSSIBLE DUPLICATE – SAVE ANYWAY?';
+      _safeNotify();
+      return false;
+    }
+    final sourceRef = value.sourceRef?.trim();
+    if (sourceRef == null || sourceRef.isEmpty) {
+      errorCode = ActivityImportErrorCode.noActivityData;
+      message = 'ACTIVITY SOURCE COULD NOT BE READ – SHARE AGAIN FROM STRAVA';
+      _safeNotify();
       return false;
     }
     phase = ActivityImportPhase.saving;
@@ -184,10 +176,7 @@ class ActivityImportController extends ChangeNotifier {
         activityId: importedActivityId(
           ownerNik: featureController.session.nik,
           source: value.source,
-          start: start,
-          distanceMeters: value.distanceMeters!,
-          durationSeconds: value.durationSeconds!,
-          sourceUrl: value.payload.sharedUrl,
+          sourceRef: sourceRef,
         ),
         ownerNik: featureController.session.nik,
         nicknameSnapshot: featureController.session.nickname,
@@ -198,16 +187,23 @@ class ActivityImportController extends ChangeNotifier {
         activeDurationMillis: durationMillis,
         averagePaceSecondsPerKm: value.calculatedPaceSecondsPerKm,
         createdAtMillis: createdAt.millisecondsSinceEpoch,
+        source: value.source.label,
+        sourceRef: sourceRef,
+        sourceUrl: value.sourceUrl,
       );
-      final inserted = await featureController.saveImportedActivity(activity);
-      if (!inserted) {
+      final outcome = await featureController.saveAndSyncImportedActivity(
+        activity,
+      );
+      if (outcome == ImportedActivitySaveOutcome.duplicate) {
         _fail(ActivityImportErrorCode.possibleDuplicate);
+        message = 'DUPLICATE ACTIVITY – ALREADY SAVED';
         return false;
       }
       await _consumeTokenBestEffort();
-      await inbox.clear();
       phase = ActivityImportPhase.saved;
-      message = 'ACTIVITY SAVED';
+      message = outcome == ImportedActivitySaveOutcome.synced
+          ? 'SAVED & SYNCED'
+          : 'SAVED LOCALLY – SYNC PENDING';
       _safeNotify();
       return true;
     } on BackendFailure {
@@ -219,6 +215,17 @@ class ActivityImportController extends ChangeNotifier {
     }
   }
 
+  void confirmPossibleDuplicate() {
+    draft = draft?.copyWith(possibleDuplicateConfirmed: true);
+    errorCode = null;
+    message = null;
+    _safeNotify();
+  }
+
+  Future<void> finish() async {
+    await inbox.clear();
+  }
+
   Future<void> decline() async {
     await _consumeTokenBestEffort();
     await inbox.clear();
@@ -228,22 +235,64 @@ class ActivityImportController extends ChangeNotifier {
     _safeNotify();
   }
 
-  Future<bool> _isPossibleDuplicate(ActivityImportDraft value) async {
+  Future<ActivityImportDraft> _withDuplicateState(
+    ActivityImportDraft value,
+  ) async {
+    final sourceRef = value.sourceRef?.trim();
+    final source = value.source.label;
+    final localActivities = await featureController.activityStore.newestFirst(
+      featureController.session.nik,
+    );
+    final activitiesById = <String, FinalActivity>{
+      for (final activity in featureController.activities)
+        activity.activityId: activity,
+      for (final activity in localActivities) activity.activityId: activity,
+    };
+    final activities = activitiesById.values;
+    final exactDuplicate =
+        sourceRef != null &&
+        sourceRef.isNotEmpty &&
+        activities.any(
+          (activity) =>
+              activity.source.trim().toUpperCase() == source &&
+              activity.sourceRef == sourceRef,
+        );
     final start = value.startDateTime;
     final distance = value.distanceMeters;
     final duration = value.durationSeconds;
-    if (start == null || distance == null || duration == null) return false;
-    final activities = await featureController.activityStore.newestFirst(
-      featureController.session.nik,
-    );
-    return activities.any((activity) {
-      final startDifference =
-          (activity.startDateTimeMillis - start.millisecondsSinceEpoch).abs();
-      final distanceTolerance = (distance * 0.015).clamp(50.0, 200.0);
-      return startDifference <= const Duration(minutes: 2).inMilliseconds &&
-          (activity.distanceMeters - distance).abs() <= distanceTolerance &&
+    if (exactDuplicate ||
+        start == null ||
+        distance == null ||
+        duration == null) {
+      return value.copyWith(
+        exactDuplicate: exactDuplicate,
+        possibleDuplicate: false,
+      );
+    }
+    final possibleDuplicate = activities.any((activity) {
+      if (activity.source.trim().toUpperCase() != source ||
+          activity.sourceRef == sourceRef) {
+        return false;
+      }
+      final existingDate = DateTime.fromMillisecondsSinceEpoch(
+        activity.startDateTimeMillis,
+      );
+      if (existingDate.year != start.year ||
+          existingDate.month != start.month ||
+          existingDate.day != start.day) {
+        return false;
+      }
+      final distanceTolerance = (distance * 0.015).clamp(0.0, 200.0);
+      return (activity.distanceMeters - distance).abs() <= distanceTolerance &&
           (activity.activeDurationMillis ~/ 1000 - duration).abs() <= 60;
     });
+    return value.copyWith(
+      exactDuplicate: false,
+      possibleDuplicate: possibleDuplicate,
+      possibleDuplicateConfirmed: possibleDuplicate
+          ? value.possibleDuplicateConfirmed
+          : false,
+    );
   }
 
   Future<void> _consumeTokenBestEffort() async {
@@ -259,15 +308,22 @@ class ActivityImportController extends ChangeNotifier {
   void _refreshPreviewMessage() {
     final value = draft;
     phase = ActivityImportPhase.preview;
-    if (value == null || !value.canSave) {
-      errorCode = ActivityImportErrorCode.partialData;
-      message = 'COMPLETE DISTANCE, DURATION, DATE, AND START TIME';
-    } else if (value.possibleDuplicate) {
+    if (!_ocrMetricsRead) {
+      errorCode = ActivityImportErrorCode.ocrFailed;
+      message = 'ACTIVITY DATA COULD NOT BE READ – SHARE AGAIN FROM STRAVA';
+    } else if (value?.exactDuplicate == true) {
       errorCode = ActivityImportErrorCode.possibleDuplicate;
-      message = 'POSSIBLE DUPLICATE - REVIEW BEFORE SAVING';
-    } else if (value.paceStatus == ActivityImportPaceStatus.reviewRequired) {
+      message = 'DUPLICATE ACTIVITY – ALREADY SAVED';
+    } else if (value?.source == ActivityImportSource.strava &&
+        (value?.sourceRef == null || value!.sourceRef!.trim().isEmpty)) {
+      errorCode = ActivityImportErrorCode.noActivityData;
+      message = 'ACTIVITY SOURCE COULD NOT BE READ – SHARE AGAIN FROM STRAVA';
+    } else if (value == null || !value.canSave) {
       errorCode = ActivityImportErrorCode.partialData;
-      message = 'PACE DOES NOT MATCH - REVIEW REQUIRED';
+      message = 'SELECT ACTIVITY DATE AND START TIME';
+    } else if (value.possibleDuplicate && !value.possibleDuplicateConfirmed) {
+      errorCode = ActivityImportErrorCode.possibleDuplicate;
+      message = 'POSSIBLE DUPLICATE – SAVE ANYWAY?';
     } else {
       errorCode = null;
       message = null;
@@ -300,35 +356,12 @@ class ActivityImportController extends ChangeNotifier {
   }
 }
 
-int? parseEditableDuration(String value) {
-  final parts = value.trim().split(':');
-  if (parts.length != 2 && parts.length != 3) return null;
-  final values = parts.map(int.tryParse).toList();
-  if (values.any((item) => item == null || item < 0)) return null;
-  if (parts.length == 2) {
-    if (values[1]! > 59) return null;
-    return values[0]! * 60 + values[1]!;
-  }
-  if (values[1]! > 59 || values[2]! > 59) return null;
-  return values[0]! * 3600 + values[1]! * 60 + values[2]!;
-}
-
 String importedActivityId({
   required String ownerNik,
   required ActivityImportSource source,
-  required DateTime start,
-  required double distanceMeters,
-  required int durationSeconds,
-  String? sourceUrl,
+  required String sourceRef,
 }) {
-  final canonical = [
-    ownerNik,
-    source.label,
-    start.toUtc().toIso8601String(),
-    distanceMeters.round(),
-    durationSeconds,
-    sourceUrl?.trim() ?? '',
-  ].join('|');
+  final canonical = [ownerNik, source.label, sourceRef.trim()].join('|');
   var hash = 5381;
   for (final codeUnit in canonical.codeUnits) {
     hash = (((hash << 5) + hash) ^ codeUnit) & 0x7fffffff;

@@ -43,6 +43,7 @@ class ActivitySharePayload {
     this.sharedUrl,
     this.images = const [],
     this.sourceHint,
+    this.transientImageId,
     required this.receivedAt,
   });
 
@@ -50,6 +51,7 @@ class ActivitySharePayload {
   final String? sharedUrl;
   final List<ActivityShareImage> images;
   final String? sourceHint;
+  final String? transientImageId;
   final DateTime receivedAt;
 
   bool get hasData =>
@@ -62,11 +64,16 @@ class ActivitySharePayload {
     String? sharedUrl,
     List<ActivityShareImage>? images,
     String? sourceHint,
+    String? transientImageId,
+    bool clearTransientImageId = false,
   }) => ActivitySharePayload(
     sharedText: sharedText ?? this.sharedText,
     sharedUrl: sharedUrl ?? this.sharedUrl,
     images: images ?? this.images,
     sourceHint: sourceHint ?? this.sourceHint,
+    transientImageId: clearTransientImageId
+        ? null
+        : transientImageId ?? this.transientImageId,
     receivedAt: receivedAt,
   );
 }

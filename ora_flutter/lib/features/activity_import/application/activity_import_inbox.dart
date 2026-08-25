@@ -133,6 +133,23 @@ class ActivityImportInbox extends ChangeNotifier {
   Future<void> _receiveWebPayload(ActivitySharePayload payload) =>
       receive(ActivityImportLaunch(payload: payload));
 
+  Future<ActivitySharePayload> releaseImages(
+    ActivitySharePayload payload,
+  ) async {
+    await discardWebShareTargetImage(payload.transientImageId);
+    final sanitized = payload.copyWith(
+      images: const [],
+      clearTransientImageId: true,
+    );
+    final active = current;
+    if (active?.payload == payload) {
+      current = ActivityImportLaunch(token: active?.token, payload: sanitized);
+      await _store.save(current!.toJson());
+      if (!_disposed) notifyListeners();
+    }
+    return sanitized;
+  }
+
   Future<void> clear() async {
     current = null;
     await _store.clear();
