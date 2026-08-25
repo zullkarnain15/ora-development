@@ -14,8 +14,10 @@ class ActivityImportParser {
     ]);
     final source = _detectSource(payload.sourceHint, sharedText, sharedUrl);
     final distance = _parseDistance(sharedText);
-    final duration = _parseDuration(sharedText);
     final detectedPace = _parsePace(sharedText);
+    final duration =
+        _parseDuration(sharedText) ??
+        _durationFromDistanceAndPace(distance, detectedPace);
     final start = _parseStartDateTime(sharedText);
     final sourceReference = source == ActivityImportSource.strava
         ? extractStravaSourceReference(sharedUrl)
@@ -55,14 +57,36 @@ class ActivityImportParser {
   }
 
   double? _parseDistance(String text) {
-    final match = RegExp(
-      r'(\d+(?:[.,]\d+)?)\s*(km|kilomet(?:er|re)s?|m)\b',
+    final kilometers = RegExp(
+      r'(\d+(?:[.,]\d+)?)\s*(?:k\s*m|kilomet(?:er|re)s?)\b',
       caseSensitive: false,
     ).firstMatch(text);
-    if (match == null) return null;
-    final value = double.tryParse(match.group(1)!.replaceAll(',', '.'));
-    if (value == null || !value.isFinite || value <= 0) return null;
-    return match.group(2)!.toLowerCase() == 'm' ? value : value * 1000;
+    final kilometersValue = _positiveNumber(kilometers?.group(1));
+    if (kilometersValue != null) return kilometersValue * 1000;
+
+    final labeledMeters = RegExp(
+      r'distance\D{0,24}?(\d+(?:[.,]\d+)?)\s*m\b',
+      caseSensitive: false,
+    ).firstMatch(text);
+    final labeledMetersValue = _positiveNumber(labeledMeters?.group(1));
+    if (labeledMetersValue != null) return labeledMetersValue;
+
+    final genericMeters = RegExp(
+      r'(\d+(?:[.,]\d+)?)\s*m\b',
+      caseSensitive: false,
+    ).allMatches(text);
+    for (final match in genericMeters) {
+      final value = _positiveNumber(match.group(1));
+      // A plain `38m 47s` is duration. Unlabelled metre distances in a
+      // Strava card are normally at least three digits.
+      if (value != null && value >= 100) return value;
+    }
+    return null;
+  }
+
+  double? _positiveNumber(String? value) {
+    final parsed = double.tryParse((value ?? '').replaceAll(',', '.'));
+    return parsed == null || !parsed.isFinite || parsed <= 0 ? null : parsed;
   }
 
   int? _parseDuration(String text) {
@@ -101,6 +125,17 @@ class ActivityImportParser {
     ).firstMatch(text);
     if (match == null) return null;
     return int.parse(match.group(1)!) * 60 + int.parse(match.group(2)!);
+  }
+
+  int? _durationFromDistanceAndPace(double? distanceMeters, int? pace) {
+    if (distanceMeters == null ||
+        distanceMeters <= 0 ||
+        pace == null ||
+        pace <= 0) {
+      return null;
+    }
+    final duration = (pace * distanceMeters / 1000).round();
+    return duration > 0 ? duration : null;
   }
 
   DateTime? _parseStartDateTime(String text) {

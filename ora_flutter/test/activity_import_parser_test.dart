@@ -28,6 +28,50 @@ void main() {
     expect(result.canSave, isFalse);
   });
 
+  test('parses all supported Strava image template OCR outputs', () {
+    const templates = <String, String>{
+      'club summary': '''
+OTO RUNNERS
+Distance     Pace       Time
+5.04 km      7:41 /km   38m 47s
+STRAVA
+''',
+      'share card': '''
+Distance 5.04 km   Pace 7:41 /km   Time 38m 47s
+Evening Run
+Check out my activity on STRAVA
+''',
+      'portrait map': '''
+Evening Run
+Pace
+7:41 /km
+Time
+38m 47s
+Distance
+5.04 km
+''',
+    };
+
+    for (final entry in templates.entries) {
+      final result = parser.parse(payload(entry.value));
+      expect(result.distanceMeters, 5040, reason: entry.key);
+      expect(result.durationSeconds, 2327, reason: entry.key);
+      expect(result.detectedPaceSecondsPerKm, 461, reason: entry.key);
+    }
+  });
+
+  test(
+    'calculates duration from distance and pace when Time OCR is missing',
+    () {
+      final result = parser.parse(payload('Distance 5.04 km\nPace 7:41 /km'));
+
+      expect(result.distanceMeters, 5040);
+      expect(result.detectedPaceSecondsPerKm, 461);
+      expect(result.durationSeconds, 2323);
+      expect(result.calculatedPaceSecondsPerKm, 461);
+    },
+  );
+
   test('detects source and parses duration written with units', () {
     final result = parser.parse(
       payload(
