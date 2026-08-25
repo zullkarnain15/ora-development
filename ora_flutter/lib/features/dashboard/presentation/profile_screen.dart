@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../../../core/theme/ora_theme.dart';
 import '../../mascot/awan_mascot_slot.dart';
+import '../../mascot/awan_mascot_state.dart';
 import '../../../shared/widgets/ora_widgets.dart';
 import '../../activity/domain/final_activity.dart';
 import '../../activity/presentation/activity_route_viewer.dart';
@@ -62,7 +63,11 @@ class _ProfileScreenState extends State<ProfileScreen> {
                     assetName: 'you.png',
                   ),
                 ),
-                const AwanMascotSlot(minSize: 34, maxSize: 39),
+                const AwanMascotSlot(
+                  state: AwanMascotState.cheer,
+                  minSize: 34,
+                  maxSize: 39,
+                ),
                 IconButton(
                   key: const Key('open_settings'),
                   onPressed: onSettings,

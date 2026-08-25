@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 
 import '../../../core/theme/ora_theme.dart';
 import 'awan_mascot_slot.dart';
+import 'awan_mascot_state.dart';
 
 class AwanHomeGreeting extends StatefulWidget {
   const AwanHomeGreeting({super.key});
@@ -42,7 +43,11 @@ class _AwanHomeGreetingState extends State<AwanHomeGreeting> {
     builder: (context, constraints) {
       final compact = constraints.maxWidth < 340;
       final bubble = _AwanBubble(message: _messages[_messageIndex]);
-      const mascot = AwanMascotSlot(minSize: 40, maxSize: 50);
+      const mascot = AwanMascotSlot(
+        state: AwanMascotState.cheer,
+        minSize: 40,
+        maxSize: 50,
+      );
       if (compact) {
         return Column(
           crossAxisAlignment: CrossAxisAlignment.end,

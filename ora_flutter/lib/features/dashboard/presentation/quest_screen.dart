@@ -24,7 +24,7 @@ class _QuestScreenState extends State<QuestScreen> {
   @override
   void initState() {
     super.initState();
-    _awanController = AwanMascotController();
+    _awanController = AwanMascotController(initialState: AwanMascotState.cheer);
     _lastClaimEvent = _claimEvent;
     widget.controller.addListener(_onFeatureChanged);
   }

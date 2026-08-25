@@ -24,7 +24,9 @@ Parsing order is shared text, shared URL, then screenshot OCR fallback. ORA neve
 ## Entry routes and login resume
 
 - iPhone Shortcut: `/#/import?t=<opaque-token>`.
-- Android PWA share target: `./?share_target=1&title=...&text=...&url=...`.
+- Android PWA share target: multipart `POST` to `./share-target`. The ORA
+  service worker retains shared text, URL, and one image (maximum 5 MB), then
+  opens `./?share_target=1&share_id=...` for Activity Preview.
 - Android native: `ACTION_SEND` or `ACTION_SEND_MULTIPLE` through `ora/activity_share`.
 
 A bare `/#/import` route is ignored. A pending share is retained through login, and web token/text launches are persisted in per-tab `sessionStorage` until preview is declined or saved.
@@ -35,9 +37,14 @@ Apps Script provides `createImportToken`, `getImportPayload`, and `consumeImport
 
 Redeploy and authorize the Apps Script web app before publishing the official iPhone Shortcut. Run `testImportTokenLifecycle` from the Apps Script editor after authorization.
 
-## Android PWA limitation
+## Android PWA image bridge
 
-GitHub Pages is static and cannot receive a multipart POST share target. The installed Android PWA can therefore receive shared text and URL through its relative GET share target, but direct PWA screenshot sharing is a hosting/platform limitation. Screenshot input remains supported by Android native and the iPhone token bridge.
+GitHub Pages remains static. Multipart shares are intercepted locally by
+`ora_service_worker.js`, stored briefly in a private Cache Storage entry, and
+consumed by Flutter without uploading the screenshot to GitHub Pages or the ORA
+backend. Entries expire after 15 minutes and are deleted after Flutter reads
+them. Android registers updated share MIME types when the PWA is installed, so
+an older ORA PWA must be uninstalled and installed again after this change.
 
 Feature rollback flags:
 

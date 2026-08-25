@@ -4,6 +4,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 
 import '../data/activity_import_launch_store.dart';
+import '../data/web_share_target_reader.dart';
 import '../domain/activity_share_payload.dart';
 
 class ActivityImportLaunch {
@@ -85,7 +86,12 @@ class ActivityImportInbox extends ChangeNotifier {
     final stored = await _store.load();
     if (stored != null) current = ActivityImportLaunch.fromJson(stored);
 
-    final launched = ActivityImportLaunch.fromUri(Uri.base);
+    final webPayload = kIsWeb
+        ? await readWebShareTargetPayload(Uri.base)
+        : null;
+    final launched = webPayload == null
+        ? ActivityImportLaunch.fromUri(Uri.base)
+        : ActivityImportLaunch(payload: webPayload);
     if (launched?.hasRequest == true) await receive(launched!);
 
     if (!kIsWeb) {

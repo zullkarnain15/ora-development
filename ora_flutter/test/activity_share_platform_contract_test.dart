@@ -31,16 +31,28 @@ void main() {
     expect(mainActivity, contains('onSharePayload'));
   });
 
-  test('PWA exposes a base-path-safe text and URL share target', () {
+  test('PWA exposes a base-path-safe text URL and image share target', () {
     final manifest = jsonDecode(
       File('web/manifest.json').readAsStringSync(),
     ) as Map<String, Object?>;
     final shareTarget = manifest['share_target'] as Map<String, Object?>;
     final params = shareTarget['params'] as Map<String, Object?>;
+    final files = params['files'] as List<Object?>;
+    final imageTarget = files.single as Map<String, Object?>;
 
     expect(manifest['short_name'], 'ORA');
-    expect(shareTarget['action'], './?share_target=1');
-    expect(shareTarget['method'], 'GET');
+    expect(shareTarget['action'], './share-target');
+    expect(shareTarget['method'], 'POST');
+    expect(shareTarget['enctype'], 'multipart/form-data');
     expect(params.keys, containsAll(['title', 'text', 'url']));
+    expect(imageTarget['name'], 'activity_images');
+    expect(imageTarget['accept'], contains('image/*'));
+
+    final bootstrap = File('web/flutter_bootstrap.js').readAsStringSync();
+    final worker = File('web/ora_service_worker.js').readAsStringSync();
+    expect(bootstrap, contains('serviceWorkerUrl: `ora_service_worker.js'));
+    expect(worker, contains("request.formData()"));
+    expect(worker, contains("form.getAll('activity_images')"));
+    expect(worker, contains("Response.redirect(destination.toString(), 303)"));
   });
 }
