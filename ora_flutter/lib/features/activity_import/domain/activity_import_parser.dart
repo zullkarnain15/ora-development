@@ -8,7 +8,7 @@ class ActivityImportParser {
     final sharedText = payload.sharedText?.trim() ?? '';
     final extractedUrl = _extractUrl(sharedText);
     final sharedUrl = _nonEmpty(payload.sharedUrl) ?? extractedUrl;
-    final source = _detectSource(payload.sourceHint, sharedUrl, sharedText);
+    final source = _detectSource(payload.sourceHint, sharedText, sharedUrl);
     final distance = _parseDistance(sharedText);
     final duration = _parseDuration(sharedText);
     final detectedPace = _parsePace(sharedText);
@@ -26,10 +26,16 @@ class ActivityImportParser {
     );
   }
 
-  ActivityImportSource _detectSource(String? hint, String? url, String text) {
+  ActivityImportSource _detectSource(String? hint, String text, String? url) {
     final hinted = ActivityImportSourceValue.parse(hint);
     if (hinted != ActivityImportSource.unknown) return hinted;
-    final haystack = '${url ?? ''}\n$text'.toLowerCase();
+    final textSource = _sourceIn(text);
+    if (textSource != ActivityImportSource.unknown) return textSource;
+    return _sourceIn(url ?? '');
+  }
+
+  ActivityImportSource _sourceIn(String value) {
+    final haystack = value.toLowerCase();
     if (haystack.contains('strava')) return ActivityImportSource.strava;
     if (haystack.contains('garmin')) return ActivityImportSource.garmin;
     if (haystack.contains('coros')) return ActivityImportSource.coros;

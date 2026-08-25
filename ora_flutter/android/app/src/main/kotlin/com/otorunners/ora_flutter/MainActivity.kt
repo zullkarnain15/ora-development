@@ -104,12 +104,12 @@ class MainActivity : FlutterActivity() {
     }
 
     private fun captureShareIntent(intent: Intent?, notifyDart: Boolean) {
-        if (intent?.action != Intent.ACTION_SEND) return
-        val sharedText = intent.getStringExtra(Intent.EXTRA_TEXT)?.trim().orEmpty()
+        if (intent?.action != Intent.ACTION_SEND && intent?.action != Intent.ACTION_SEND_MULTIPLE) return
+        val sharedText = intent.getCharSequenceExtra(Intent.EXTRA_TEXT)?.toString()?.trim().orEmpty()
         val sharedUrl = Patterns.WEB_URL.matcher(sharedText).let { matcher ->
             if (matcher.find()) matcher.group() else null
         }
-        val imageUri = intent.streamUri()
+        val imageUri = intent.streamUris().firstOrNull()
         val imageBytes = imageUri?.let { readImageBytes(it) }
         if (sharedText.isEmpty() && sharedUrl.isNullOrEmpty() && imageBytes == null) return
         val payload = mutableMapOf<String, Any?>(
@@ -131,8 +131,12 @@ class MainActivity : FlutterActivity() {
     }
 
     @Suppress("DEPRECATION")
-    private fun Intent.streamUri(): Uri? =
-        getParcelableExtra(Intent.EXTRA_STREAM) as? Uri
+    private fun Intent.streamUris(): List<Uri> =
+        if (action == Intent.ACTION_SEND_MULTIPLE) {
+            getParcelableArrayListExtra<Uri>(Intent.EXTRA_STREAM).orEmpty()
+        } else {
+            listOfNotNull(getParcelableExtra(Intent.EXTRA_STREAM) as? Uri)
+        }
 
     private fun readImageBytes(uri: Uri): ByteArray? = try {
         contentResolver.openInputStream(uri)?.use { input ->

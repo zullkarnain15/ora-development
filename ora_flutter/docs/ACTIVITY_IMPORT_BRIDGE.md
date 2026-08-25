@@ -1,57 +1,53 @@
-# ORA Activity Import Bridge
+# ORA Share Activity Bridge
 
-## Architecture
-
-All entry points normalize into `ActivitySharePayload` and use the same parser, validator, duplicate pre-check, preview, and existing activity save/sync pipeline:
+## User flow
 
 ```text
-Android native share ─┐
-Android PWA share ────┼─> ActivityImportInbox -> ORA IMPORT -> existing ActivityStore/sync
-iPhone Shortcut token ┤
-Manual screenshot ────┘
+Strava -> Share -> Send to ORA -> Activity Preview -> Decline / Save Activity
 ```
 
-The parser detects the source and extracts portable URL/text data first. Image handling is an OCR abstraction/fallback: the current PWA build reports `OCR_NOT_AVAILABLE` and keeps distance, duration, date, and time editable. It does not add a heavy browser OCR dependency.
+There is deliberately no import, upload, or Shortcut menu in Settings/You. `IMPORT ACTIVITY` is an internal preview route opened only after ORA receives shared content.
 
-## Routes and resume behavior
+## Shared engine
 
-- Apple Shortcut entry: `/#/import?t=<opaque-token>`.
-- Android PWA GET share target: `./?share_target=1&title=...&text=...&url=...`.
-- Manual entry: **You / Settings → SHARE ACTIVITY → IMPORT ACTIVITY**.
+All supported entry points normalize into `ActivitySharePayload` and use the same parser, validation, duplicate pre-check, preview, and existing `ActivityStore`/sync pipeline:
 
-The pending launch is persisted in web `sessionStorage` as `ora_pending_activity_import`. Authentication remains authoritative; a logged-out user sees login first, then the authenticated app consumes the pending import and opens its preview. Reloading the same browser tab also preserves it.
+```text
+Android native share --+
+Android PWA share -----+-> ActivityImportInbox -> Activity Preview
+iPhone Shortcut token -+                           |
+                                                   +-> existing save/sync
+```
 
-## Temporary backend payload
+Parsing order is shared text, shared URL, then screenshot OCR fallback. ORA never scrapes Strava and does not use the Strava API. The current web OCR implementation reports `OCR_NOT_AVAILABLE` when text/URL is incomplete and keeps the required preview fields editable.
 
-Apps Script actions:
+## Entry routes and login resume
 
-- `createImportToken`: anonymous POST of share input; returns an unpredictable opaque token.
-- `getImportPayload`: fetches the private temporary payload for preview.
-- `consumeImportToken`: deletes the Drive payload and leaves a short-lived `CONSUMED` marker.
+- iPhone Shortcut: `/#/import?t=<opaque-token>`.
+- Android PWA share target: `./?share_target=1&title=...&text=...&url=...`.
+- Android native: `ACTION_SEND` or `ACTION_SEND_MULTIPLE` through `ora/activity_share`.
 
-TTL is 600 seconds. Script Properties store only hashed token metadata; payload JSON is stored in a private Drive folder. Temporary input never calls `submitActivity`. The backend deployment must be updated and authorized for Drive access before the bridge is live. Run `testImportTokenLifecycle` from the Apps Script editor after deployment authorization.
+A bare `/#/import` route is ignored. A pending share is retained through login, and web token/text launches are persisted in per-tab `sessionStorage` until preview is declined or saved.
 
-## PWA share-target limitation
+## Temporary token backend
 
-The current ORA host is static GitHub Pages. A manifest `POST`/`multipart/form-data` file share target requires a request handler at the target URL, which GitHub Pages cannot provide. The manifest therefore uses a relative `GET` target for text and URL. This keeps the PWA installable and base-href safe, but Android PWA image sharing is a platform/hosting limitation in this deployment. Users can select a screenshot inside ORA or use the token bridge.
+Apps Script provides `createImportToken`, `getImportPayload`, and `consumeImportToken`. Tokens are opaque, short-lived (600 seconds), and consumable. Hashed token metadata is stored in Script Properties; temporary payload JSON is kept in a private Drive folder. Creating or fetching a token never calls `submitActivity`.
 
-## Build configuration
+Redeploy and authorize the Apps Script web app before publishing the official iPhone Shortcut. Run `testImportTokenLifecycle` from the Apps Script editor after authorization.
 
-Feature flags default to enabled:
+## Android PWA limitation
+
+GitHub Pages is static and cannot receive a multipart POST share target. The installed Android PWA can therefore receive shared text and URL through its relative GET share target, but direct PWA screenshot sharing is a hosting/platform limitation. Screenshot input remains supported by Android native and the iPhone token bridge.
+
+Feature rollback flags:
 
 - `ACTIVITY_IMPORT_ENABLED`
 - `ACTIVITY_IMPORT_WEB_ENABLED`
-- `IOS_SHORTCUT_IMPORT_ENABLED`
 
-The official Shortcut distribution link is supplied as `ORA_IOS_SHORTCUT_URL`. The production web command remains:
+Production web build:
 
 ```powershell
-flutter build web --release --base-href /ora-development/ `
-  --dart-define=ORA_IOS_SHORTCUT_URL=https://www.icloud.com/shortcuts/REPLACE_ME
+flutter build web --release --base-href /ora-development/
 ```
 
-To disable an entry point for rollback, pass the corresponding flag as `false` with `--dart-define`.
-
-## Device acceptance checks
-
-Android PWA and iPhone Share Sheet behavior must be verified on real installed PWAs; a desktop build cannot prove that the OS lists the share target. For both paths, verify DECLINE creates no backend Activity, then repeat with SAVE and verify exactly one Activity enters the existing sync pipeline. Native Android should additionally be tested with both Strava text and image shares.
+Share Sheet visibility and cold/background/foreground delivery must be confirmed on real devices. For DECLINE, verify that no Activity or reward changes. For SAVE, verify exactly one Activity enters the existing sync flow.

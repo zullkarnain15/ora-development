@@ -30,6 +30,21 @@ void main() {
     expect(launch?.hasRequest, isTrue);
   });
 
+  test('bare internal import route cannot open a manual import flow', () {
+    expect(
+      ActivityImportLaunch.fromUri(
+        Uri.parse('https://example.com/ora/#/import'),
+      ),
+      isNull,
+    );
+    expect(
+      ActivityImportLaunch.fromUri(
+        Uri.parse('https://example.com/ora/?share_target=1'),
+      ),
+      isNull,
+    );
+  });
+
   test('reads Android PWA GET share target text and URL', () {
     final launch = ActivityImportLaunch.fromUri(
       Uri.parse(

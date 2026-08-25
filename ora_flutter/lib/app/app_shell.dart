@@ -3,7 +3,6 @@ import 'dart:async';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import 'package:url_launcher/url_launcher.dart';
 
 import '../core/theme/ora_theme.dart';
 import '../core/network/network_reachability_monitor.dart';
@@ -161,17 +160,6 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
     setState(() => showImport = false);
     _importController?.dispose();
     _importController = null;
-  }
-
-  void _startManualImport() {
-    if (mounted) setState(() => showSettings = false);
-    unawaited(_importInbox.openManual());
-  }
-
-  Future<void> _openShortcutSetup() async {
-    final value = ActivityImportConfig.shortcutUrl.trim();
-    if (value.isEmpty) return;
-    await launchUrl(Uri.parse(value), mode: LaunchMode.externalApplication);
   }
 
   TrackingController _createTrackingController() => TrackingController(
@@ -353,8 +341,6 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
                 session: widget.session,
                 authController: widget.authController,
                 onLogout: _requestLogout,
-                onImportActivity: _startManualImport,
-                onOpenShortcut: _openShortcutSetup,
               ),
             ),
           if (showImport && _importController != null)
@@ -385,14 +371,10 @@ class SettingsScreen extends StatelessWidget {
     required this.session,
     required this.authController,
     required this.onLogout,
-    this.onImportActivity,
-    this.onOpenShortcut,
   });
   final UserSession session;
   final AuthController authController;
   final Future<void> Function() onLogout;
-  final VoidCallback? onImportActivity;
-  final Future<void> Function()? onOpenShortcut;
 
   @override
   Widget build(BuildContext context) => Scaffold(
@@ -443,42 +425,6 @@ class SettingsScreen extends StatelessWidget {
             icon: const Icon(Icons.logout),
             label: const Text('LOGOUT'),
           ),
-          if (ActivityImportConfig.enabled &&
-              (!kIsWeb || ActivityImportConfig.webEnabled)) ...[
-            const SizedBox(height: 14),
-            _settingsCard('SHARE ACTIVITY', 'adventure.png', [
-              const Text(
-                'Send an activity from Strava or select a screenshot to review it in ORA.',
-              ),
-              const SizedBox(height: 11),
-              FilledButton.icon(
-                key: const Key('open_activity_import'),
-                onPressed: onImportActivity,
-                icon: const Icon(Icons.file_upload_outlined),
-                label: const Text('IMPORT ACTIVITY'),
-              ),
-              if (ActivityImportConfig.iosShortcutEnabled) ...[
-                const SizedBox(height: 9),
-                OutlinedButton.icon(
-                  key: const Key('open_ios_shortcut_setup'),
-                  onPressed: ActivityImportConfig.shortcutUrl.trim().isEmpty
-                      ? null
-                      : onOpenShortcut,
-                  icon: const Icon(Icons.ios_share),
-                  label: Text(
-                    ActivityImportConfig.shortcutUrl.trim().isEmpty
-                        ? 'SHORTCUT SETUP COMING SOON'
-                        : 'INSTALL SEND TO ORA',
-                  ),
-                ),
-                const SizedBox(height: 5),
-                const Text(
-                  'iPhone setup opens the official Shortcut page. ORA cannot detect installation status.',
-                  style: TextStyle(fontSize: 10),
-                ),
-              ],
-            ]),
-          ],
           const SizedBox(height: 14),
           _settingsCard('RUN SETTINGS', 'location.png', const [
             OraStatLine(

@@ -7,18 +7,16 @@ import '../data/activity_import_launch_store.dart';
 import '../domain/activity_share_payload.dart';
 
 class ActivityImportLaunch {
-  const ActivityImportLaunch({this.token, this.payload, this.manual = false});
+  const ActivityImportLaunch({this.token, this.payload});
 
   final String? token;
   final ActivitySharePayload? payload;
-  final bool manual;
 
   bool get hasRequest =>
-      manual || (token?.isNotEmpty ?? false) || (payload?.hasData ?? false);
+      (token?.isNotEmpty ?? false) || (payload?.hasData ?? false);
 
   Map<String, Object?> toJson() => {
     'token': token,
-    'manual': manual,
     'sharedText': payload?.sharedText,
     'sharedUrl': payload?.sharedUrl,
     'sourceHint': payload?.sourceHint,
@@ -35,7 +33,6 @@ class ActivityImportLaunch {
     );
     return ActivityImportLaunch(
       token: _string(json['token']),
-      manual: json['manual'] == true,
       payload: payload.hasData ? payload : null,
     );
   }
@@ -49,9 +46,8 @@ class ActivityImportLaunch {
     final token =
         _string(uri.queryParameters['t']) ??
         _string(fragmentUri?.queryParameters['t']);
-    final isImportPath = fragmentUri?.path.startsWith('/import') == true;
     final isShareTarget = uri.queryParameters['share_target'] == '1';
-    if (token == null && !isImportPath && !isShareTarget) return null;
+    if (token == null && !isShareTarget) return null;
 
     final title = _string(uri.queryParameters['title']);
     final text = _string(uri.queryParameters['text']);
@@ -62,10 +58,10 @@ class ActivityImportLaunch {
       sharedUrl: url,
       receivedAt: DateTime.now(),
     );
+    if (token == null && !payload.hasData) return null;
     return ActivityImportLaunch(
       token: token,
       payload: payload.hasData ? payload : null,
-      manual: token == null && !payload.hasData,
     );
   }
 
@@ -100,7 +96,7 @@ class ActivityImportInbox extends ChangeNotifier {
         );
         if (initial != null) await _receiveNativeMap(initial);
       } on MissingPluginException {
-        // Platform has no native share adapter; manual import remains available.
+        // Platform has no native share adapter.
       }
     }
     if (!_disposed) notifyListeners();
@@ -114,13 +110,6 @@ class ActivityImportInbox extends ChangeNotifier {
     }
     if (!_disposed) notifyListeners();
   }
-
-  Future<void> openManual() => receive(
-    ActivityImportLaunch(
-      manual: true,
-      payload: ActivitySharePayload(receivedAt: DateTime.now()),
-    ),
-  );
 
   Future<void> clear() async {
     current = null;

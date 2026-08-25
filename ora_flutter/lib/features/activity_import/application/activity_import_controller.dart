@@ -53,7 +53,7 @@ class ActivityImportController extends ChangeNotifier {
       final token = launch.token;
       if (token != null) payload = await bridgeApi.fetchTemporaryPayload(token);
       payload ??= ActivitySharePayload(receivedAt: _clock());
-      if (!payload.hasData && !launch.manual) {
+      if (!payload.hasData) {
         _fail(ActivityImportErrorCode.noSharedData);
         return;
       }

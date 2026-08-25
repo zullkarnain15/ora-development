@@ -1,3 +1,5 @@
+import 'dart:typed_data';
+
 import 'package:flutter_test/flutter_test.dart';
 import 'package:ora_flutter/features/activity_import/domain/activity_import_models.dart';
 import 'package:ora_flutter/features/activity_import/domain/activity_import_parser.dart';
@@ -57,6 +59,10 @@ void main() {
     final dateOnly = parser.parse(payload('5 km\n30:00\n25 Aug 2026'));
 
     expect(complete.startDateTime, DateTime(2026, 8, 25, 6, 15));
+    expect(
+      complete.startEpochSeconds,
+      DateTime(2026, 8, 25, 6, 15).millisecondsSinceEpoch ~/ 1000,
+    );
     expect(complete.canSave, isTrue);
     expect(dateOnly.startDateTime, isNull);
     expect(
@@ -72,5 +78,40 @@ void main() {
 
     expect(result.calculatedPaceSecondsPerKm, 360);
     expect(result.paceStatus, ActivityImportPaceStatus.reviewRequired);
+  });
+
+  test('shared text source takes priority over a conflicting shared URL', () {
+    final result = parser.parse(
+      payload(
+        'Garmin activity\n5 km\n30:00',
+        url: 'https://www.strava.com/activities/123',
+      ),
+    );
+
+    expect(result.source, ActivityImportSource.garmin);
+  });
+
+  test('image OCR fallback is requested only when text is incomplete', () {
+    final image = ActivityShareImage(
+      bytes: Uint8List.fromList([1, 2, 3]),
+      mimeType: 'image/jpeg',
+    );
+    final incomplete = parser.parse(
+      ActivitySharePayload(
+        sharedText: 'Strava activity',
+        images: [image],
+        receivedAt: DateTime(2026, 8, 25),
+      ),
+    );
+    final complete = parser.parse(
+      ActivitySharePayload(
+        sharedText: 'Strava\n5 km\n30:00\n2026-08-25 at 06:15',
+        images: [image],
+        receivedAt: DateTime(2026, 8, 25),
+      ),
+    );
+
+    expect(incomplete.ocrFallbackRequired, isTrue);
+    expect(complete.ocrFallbackRequired, isFalse);
   });
 }

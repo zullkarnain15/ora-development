@@ -195,6 +195,9 @@ void main() {
       await tester.pumpAndSettle();
       expect(find.byType(SettingsScreen), findsOneWidget);
       expect(find.byType(NavigationBar), findsNothing);
+      expect(find.byKey(const Key('open_activity_import')), findsNothing);
+      expect(find.byKey(const Key('open_ios_shortcut_setup')), findsNothing);
+      expect(find.text('SHARE ACTIVITY'), findsNothing);
       await tester.tap(find.byKey(const Key('edit_nickname')));
       await tester.pumpAndSettle();
       expect(find.text('EDIT NICKNAME'), findsOneWidget);

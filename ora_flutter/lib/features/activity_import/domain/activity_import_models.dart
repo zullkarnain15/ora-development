@@ -40,6 +40,11 @@ class ActivityImportDraft {
   final bool possibleDuplicate;
   final bool ocrFallbackRequired;
 
+  int? get startEpochSeconds {
+    final start = startDateTime;
+    return start == null ? null : start.millisecondsSinceEpoch ~/ 1000;
+  }
+
   int? get calculatedPaceSecondsPerKm {
     final distance = distanceMeters;
     final duration = durationSeconds;
