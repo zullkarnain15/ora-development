@@ -69,6 +69,8 @@ void main() {
     await tester.pump();
 
     expect(find.text('SHARED ACTIVITY'), findsNWidgets(2));
+    expect(find.text('ACTIVITY PREVIEW'), findsOneWidget);
+    expect(find.text('STRAVA ACTIVITY PREVIEW'), findsNothing);
     expect(find.text('STRAVA'), findsOneWidget);
     expect(find.text('8.09 KM'), findsOneWidget);
     expect(find.text('58:06'), findsOneWidget);

@@ -1,9 +1,7 @@
 import 'package:web/web.dart' as web;
 
+import '../network/apps_script_client.dart';
 import 'iphone_pwa_share_setup_rules.dart';
-
-const iphoneShareShortcutUrl =
-    'https://www.icloud.com/shortcuts/30c3fe6ba4ef4381ba5e75019c150768';
 
 bool get isIphonePwaShareSetupAvailable => isIphonePwaBrowser(
   isWeb: true,
@@ -13,9 +11,7 @@ bool get isIphonePwaShareSetupAvailable => isIphonePwaBrowser(
 );
 
 Future<void> openIphonePwaShareShortcut() async {
-  final link = web.HTMLAnchorElement()
-    ..href = iphoneShareShortcutUrl
-    ..target = '_blank'
-    ..rel = 'noopener noreferrer';
-  link.click();
+  final data = await AppsScriptClient().get('iphoneShortcut');
+  final uri = requireIcloudShortcutUri(data['linkIcloud']);
+  web.window.location.assign(uri.toString());
 }

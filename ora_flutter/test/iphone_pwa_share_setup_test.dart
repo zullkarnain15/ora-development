@@ -59,6 +59,19 @@ void main() {
     );
   });
 
+  test('accepts only an iCloud Shortcut installation URL', () {
+    expect(
+      requireIcloudShortcutUri(
+        'https://www.icloud.com/shortcuts/30c3fe6ba4ef4381ba5e75019c150768',
+      ).toString(),
+      'https://www.icloud.com/shortcuts/30c3fe6ba4ef4381ba5e75019c150768',
+    );
+    expect(
+      () => requireIcloudShortcutUri('https://example.com/shortcuts/wrong'),
+      throwsFormatException,
+    );
+  });
+
   testWidgets(
     'renders and opens shortcut setup only when enabled for iPhone PWA',
     (tester) async {
@@ -104,4 +117,28 @@ void main() {
       authController.dispose();
     },
   );
+
+  testWidgets('shows an error when the configured Shortcut cannot be opened', (
+    tester,
+  ) async {
+    final authController = _authController();
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: buildOraTheme(),
+        home: SettingsScreen(
+          session: _session,
+          authController: authController,
+          onLogout: () async {},
+          showIphoneShareSetup: true,
+          onInstallIphoneShortcut: () async => throw StateError('missing'),
+        ),
+      ),
+    );
+    await tester.drag(find.byType(ListView), const Offset(0, -360));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('install_send_to_ora')));
+    await tester.pump();
+    expect(find.text('SHORTCUT LINK IS UNAVAILABLE'), findsOneWidget);
+    authController.dispose();
+  });
 }

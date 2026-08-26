@@ -15,9 +15,11 @@ class ActivityImportParser {
     final source = _detectSource(payload.sourceHint, sharedText, sharedUrl);
     final distance = _parseDistance(sharedText);
     final detectedPace = _parsePace(sharedText);
-    final duration =
-        _parseDuration(sharedText) ??
-        _durationFromDistanceAndPace(distance, detectedPace);
+    final duration = _resolveDuration(
+      detected: _parseDuration(sharedText),
+      distanceMeters: distance,
+      paceSecondsPerKm: detectedPace,
+    );
     final start = _parseStartDateTime(sharedText);
     final sourceReference = source == ActivityImportSource.strava
         ? extractStravaSourceReference(sharedUrl)
@@ -136,6 +138,33 @@ class ActivityImportParser {
     }
     final duration = (pace * distanceMeters / 1000).round();
     return duration > 0 ? duration : null;
+  }
+
+  int? _resolveDuration({
+    required int? detected,
+    required double? distanceMeters,
+    required int? paceSecondsPerKm,
+  }) {
+    final calculated = _durationFromDistanceAndPace(
+      distanceMeters,
+      paceSecondsPerKm,
+    );
+    if (detected == null) return calculated;
+    if (calculated == null) return detected;
+
+    final difference = (detected - calculated).abs();
+
+    // Tesseract can read a two-line Strava value such as `25m` / `18s`
+    // as only `25m`. An exact minute next to a coherent distance and pace is
+    // therefore completed from those two independent metrics.
+    if (detected % 60 == 0 && difference > 0 && difference <= 59) {
+      return calculated;
+    }
+
+    // A non-trivial mismatch must remain visible to the reviewer. It may be an
+    // OCR error, but silently replacing it would also hide a genuinely
+    // inconsistent source card.
+    return detected;
   }
 
   DateTime? _parseStartDateTime(String text) {

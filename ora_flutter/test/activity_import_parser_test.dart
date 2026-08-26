@@ -72,6 +72,16 @@ Distance
     },
   );
 
+  test('repairs a missing seconds line in Strava Time OCR', () {
+    final result = parser.parse(
+      payload('Distance\n3.03 km\nTime\n25m\nPace\n8:21 /km'),
+    );
+
+    expect(result.distanceMeters, 3030);
+    expect(result.detectedPaceSecondsPerKm, 501);
+    expect(result.durationSeconds, 1518);
+  });
+
   test('detects source and parses duration written with units', () {
     final result = parser.parse(
       payload(

@@ -30,6 +30,7 @@ const ORA_IMPORT_FOLDER_ID_PROPERTY = 'ORA_IMPORT_FOLDER_ID';
 const ORA_IMPORT_MAX_IMAGE_BYTES = 2 * 1024 * 1024;
 const ORA_IMPORT_MAX_TEXT_LENGTH = 20000;
 const ORA_IMPORT_MAX_ACTIVE = 100;
+const ORA_IMPORT_WEB_URL = 'https://zullkarnain15.github.io/ora-development/?t=';
 
 const ORA_CONFIG_DEFINITIONS = Object.freeze({
   MIN_DISTANCE_VALID_RUN_KM: Object.freeze({
@@ -52,6 +53,7 @@ const ORA_SHEETS = Object.freeze({
   ATTENDANCE_EVENTS: 'Attendance_Event_Master',
   ATTENDANCE_RECORDS: 'Attendance_Records',
   ATTENDANCE_REWARDS: 'Attendance_Reward_Master',
+  SHORTCUT_ICLOUD: 'Shortcut_Icloud',
 });
 
 const ORA_HEADERS = Object.freeze({
@@ -164,11 +166,12 @@ const ORA_HEADERS = Object.freeze({
     'CreatedAt',
   ],
   Attendance_Reward_Master: ['RewardType', 'Milestone', 'XP', 'Status'],
+  Shortcut_Icloud: ['LINK_ICLOUD'],
 });
 
 /**
  * Public GET endpoint.
- * Supported actions: health, config, levels, quests.
+ * Supported actions: health, config, levels, quests, iphoneShortcut.
  * Login and nickname activation intentionally require POST.
  */
 function doGet(e) {
@@ -188,13 +191,35 @@ function doGet(e) {
         return jsonSuccess_({ levels: getActiveLevels_() });
       case 'quests':
         return jsonSuccess_({ quests: getActiveQuests_() });
+      case 'iphoneshortcut':
+        return jsonSuccess_({ linkIcloud: getIphoneShortcutLink_() });
       default:
         return jsonError_('UNKNOWN_ACTION', 'Action GET tidak dikenali.');
     }
   } catch (error) {
+    if (error && error.oraCode) {
+      return jsonError_(error.oraCode, error.message);
+    }
     console.error('ORA doGet failed: %s', safeErrorMessage_(error));
     return jsonError_('INTERNAL_ERROR', 'Terjadi kesalahan pada server ORA.');
   }
+}
+
+function getIphoneShortcutLink_() {
+  const rows = readSheetObjects_(ORA_SHEETS.SHORTCUT_ICLOUD);
+  if (rows.length === 0) {
+    throw oraError_('SHORTCUT_LINK_NOT_FOUND', 'Link iCloud Shortcut belum diisi.');
+  }
+
+  return normalizeIphoneShortcutLink_(rows[0].LINK_ICLOUD);
+}
+
+function normalizeIphoneShortcutLink_(value) {
+  const link = String(value == null ? '' : value).trim();
+  if (!/^https:\/\/www\.icloud\.com\/shortcuts\/[a-z0-9]+\/?(?:[?#].*)?$/i.test(link)) {
+    throw oraError_('SHORTCUT_LINK_INVALID', 'LINK_ICLOUD harus berupa link iCloud Shortcut yang valid.');
+  }
+  return link;
 }
 
 /**
@@ -335,6 +360,7 @@ function handleCreateImportToken_(request) {
     return jsonSuccess_({
       status: 'CREATED',
       importToken: token,
+      importUrl: ORA_IMPORT_WEB_URL + encodeURIComponent(token),
       expiresInSeconds: ORA_IMPORT_TOKEN_TTL_SECONDS,
     });
   } finally {
@@ -525,6 +551,10 @@ function testImportTokenLifecycle() {
     const token = created.data.importToken;
     tokens.push(token);
     assertBackendTest_(!/Morning|8\.09|STRAVA/.test(token), 'Token tidak boleh berisi payload plaintext.');
+    assertBackendTest_(
+      created.data.importUrl === ORA_IMPORT_WEB_URL + encodeURIComponent(token),
+      'Create import token harus mengembalikan URL import lengkap.'
+    );
 
     const fetched = JSON.parse(handleGetImportPayload_({ importToken: token }).getContent());
     assertBackendTest_(fetched.ok === true, 'Fetch import token harus berhasil.');
@@ -3550,6 +3580,7 @@ function setupBackend1() {
     attendanceEvents: readSheetObjects_(ORA_SHEETS.ATTENDANCE_EVENTS).length,
     attendanceRecords: readSheetObjects_(ORA_SHEETS.ATTENDANCE_RECORDS).length,
     attendanceRewards: readSheetObjects_(ORA_SHEETS.ATTENDANCE_REWARDS).length,
+    shortcutIcloudRows: readSheetObjects_(ORA_SHEETS.SHORTCUT_ICLOUD).length,
     activeConfigKeys: Object.keys(getActiveConfig_()).length,
     activeLevels: getActiveLevels_().length,
     activeQuestsToday: getActiveQuests_().length,

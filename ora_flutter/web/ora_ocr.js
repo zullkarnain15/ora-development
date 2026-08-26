@@ -102,7 +102,47 @@ function scoreOraActivityText(value) {
       /\b\d{1,2}:[0-5]\d(?::[0-5]\d)?\b/.test(text)) score += 5;
   if (/\b\d{1,2}:[0-5]\d\s*(?:\/|per\s*)\s*k\s*m\b/i.test(text)) score += 3;
   if (/\b(?:distance|pace|time)\b/i.test(text)) score += 1;
+
+  const distance = text.match(/\b(\d+(?:[.,]\d+)?)\s*(?:k\s*m|km)\b/i);
+  const pace = text.match(/\b(\d{1,2}):([0-5]\d)\s*(?:\/|per\s*)\s*k\s*m\b/i);
+  const duration = oraDurationSeconds(text);
+  if (distance && pace && duration !== null) {
+    const kilometers = Number(distance[1].replace(',', '.'));
+    const paceSeconds = Number(pace[1]) * 60 + Number(pace[2]);
+    const expected = kilometers * paceSeconds;
+    const difference = Math.abs(duration - expected);
+    const closeTolerance = Math.max(30, expected * 0.02);
+    const looseTolerance = Math.max(90, expected * 0.06);
+    if (difference <= closeTolerance) score += 8;
+    else if (difference <= looseTolerance) score += 3;
+    else score -= 5;
+  }
   return score;
+}
+
+function oraDurationSeconds(text) {
+  const hoursMinutesSeconds = text.match(
+    /\b(\d+)\s*(?:h|hours?)\s*(\d+)\s*(?:m|minutes?)\s*(\d+)\s*(?:s|seconds?)\b/i,
+  );
+  if (hoursMinutesSeconds) {
+    return Number(hoursMinutesSeconds[1]) * 3600 +
+      Number(hoursMinutesSeconds[2]) * 60 + Number(hoursMinutesSeconds[3]);
+  }
+  const minutesSeconds = text.match(
+    /\b(\d+)\s*(?:m|minutes?)\s*(\d+)\s*(?:s|seconds?)\b/i,
+  );
+  if (minutesSeconds) {
+    return Number(minutesSeconds[1]) * 60 + Number(minutesSeconds[2]);
+  }
+  const clockValues = [...text.matchAll(/\b(\d{1,2}):([0-5]\d)(?::([0-5]\d))?\b/g)];
+  for (const clock of clockValues) {
+    const suffix = text.slice(clock.index + clock[0].length, clock.index + clock[0].length + 12);
+    if (/^\s*(?:\/|per\s*)\s*k\s*m\b/i.test(suffix)) continue;
+    return clock[3]
+      ? Number(clock[1]) * 3600 + Number(clock[2]) * 60 + Number(clock[3])
+      : Number(clock[1]) * 60 + Number(clock[2]);
+  }
+  return null;
 }
 
 async function recognizeOraVariants(worker, image) {

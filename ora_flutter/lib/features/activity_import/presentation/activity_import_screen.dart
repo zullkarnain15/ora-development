@@ -93,7 +93,7 @@ class _ActivityImportScreenState extends State<ActivityImportScreen> {
       children: [
         const OraScreenTitle(
           title: 'SHARED ACTIVITY',
-          subtitle: 'STRAVA ACTIVITY PREVIEW',
+          subtitle: 'ACTIVITY PREVIEW',
           assetName: 'adventure.png',
         ),
         const SizedBox(height: 16),

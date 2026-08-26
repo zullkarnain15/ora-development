@@ -453,10 +453,20 @@ class SettingsScreen extends StatelessWidget {
                 const SizedBox(height: 12),
                 FilledButton.icon(
                   key: const Key('install_send_to_ora'),
-                  onPressed: () {
-                    unawaited(
-                      (onInstallIphoneShortcut ?? openIphonePwaShareShortcut)(),
-                    );
+                  onPressed: () async {
+                    try {
+                      await (onInstallIphoneShortcut ??
+                          openIphonePwaShareShortcut)();
+                    } on Object {
+                      if (!context.mounted) return;
+                      ScaffoldMessenger.of(context)
+                        ..hideCurrentSnackBar()
+                        ..showSnackBar(
+                          const SnackBar(
+                            content: Text('SHORTCUT LINK IS UNAVAILABLE'),
+                          ),
+                        );
+                    }
                   },
                   icon: const Icon(Icons.ios_share),
                   label: const Text('INSTALL SEND TO ORA'),

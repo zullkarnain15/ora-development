@@ -30,6 +30,17 @@ void main() {
     expect(launch?.hasRequest, isTrue);
   });
 
+  test('reads token from the backend-generated query import URL', () {
+    final launch = ActivityImportLaunch.fromUri(
+      Uri.parse(
+        'https://zullkarnain15.github.io/ora-development/?t=opaque-token',
+      ),
+    );
+
+    expect(launch?.token, 'opaque-token');
+    expect(launch?.hasRequest, isTrue);
+  });
+
   test('bare internal import route cannot open a manual import flow', () {
     expect(
       ActivityImportLaunch.fromUri(

@@ -11,25 +11,31 @@ The Shortcut must be published as an iCloud Shortcut by the ORA publisher. Do no
 1. Create a new Shortcut named **Send to ORA**.
 2. Open its details, enable **Show in Share Sheet**, and accept **Images**, **URLs**, and **Text**.
 3. Read **Shortcut Input**. Keep the shared text, extract the first URL when present, and select the first image when present.
-4. If there is an image, use **Resize Image** (maximum width 1280 px), **Convert Image** to JPEG (approximately 50% quality), then **Base64 Encode** it without line breaks.
-5. Create a Dictionary with these keys:
+4. If there is an image, use **Resize Image** (maximum width 1280 px),
+   **Convert Image** to PNG, then **Base64 Encode** it without line breaks.
+   PNG is required because Strava's **Transparent** share template contains
+   white text in an alpha channel; converting it to JPEG can erase that text.
+5. Add **Get Contents of URL** with method **POST**, request body **JSON**, and
+   this final ORA backend endpoint:
+
+   `https://script.google.com/macros/s/AKfycbyD2oOTr39col6dqHTd721TFNizut4-Gi9jSe5CLYaTwMqx1mlQT1jD-JK8fqHSVWsn/exec`
+
+6. Add these fields directly to the JSON request body:
 
    - `action`: `createImportToken`
    - `sharedText`: the text from Shortcut Input
    - `sharedUrl`: the first URL from Shortcut Input
    - `sourceHint`: `STRAVA`
-   - `imageBase64`: Base64 JPEG, only when an image exists
-   - `imageMimeType`: `image/jpeg`, only when an image exists
-   - `imageName`: `activity.jpg`, only when an image exists
+   - `imageBase64`: Base64 PNG, only when an image exists
+   - `imageMimeType`: `image/png`, only when an image exists
+   - `imageName`: `activity.png`, only when an image exists
 
-6. Add **Get Contents of URL** with method **POST**, request body **JSON**, and this final ORA backend endpoint:
-
-   `https://script.google.com/macros/s/AKfycbyD2oOTr39col6dqHTd721TFNizut4-Gi9jSe5CLYaTwMqx1mlQT1jD-JK8fqHSVWsn/exec`
-
-7. Read `data.importToken` from the JSON response. If it is empty, show **ORA IMPORT COULD NOT START** and stop.
-8. Add **URL Encode** for that token, then add **Open URLs** with:
-
-   `https://zullkarnain15.github.io/ora-development/#/import?t=<TOKEN>`
+7. Add **Get Dictionary Value** with key `data.importUrl` and input
+   **Contents of URL** from the request above.
+8. Add **Open URLs** immediately after it. Its input is the Dictionary Value
+   returned by `data.importUrl`. If the value is empty, show
+   **ORA IMPORT COULD NOT START** and stop. Do not add **Set Variable**,
+   **URL Encode**, **Text**, or another **URL** action.
 
 9. Test once from Strava, then publish the Shortcut and distribute its iCloud Shortcut URL. Configure that URL in the iPhone-only ORA Settings button when it is available.
 
