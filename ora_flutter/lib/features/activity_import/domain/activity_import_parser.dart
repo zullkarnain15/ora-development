@@ -6,7 +6,7 @@ class ActivityImportParser {
   const ActivityImportParser();
 
   ActivityImportDraft parse(ActivitySharePayload payload) {
-    final sharedText = payload.sharedText?.trim() ?? '';
+    final sharedText = _normalizeOcrText(payload.sharedText?.trim() ?? '');
     final sharedUrls = _extractUrls(sharedText);
     final sharedUrl = _preferredStravaUrl([
       ?_nonEmpty(payload.sharedUrl),
@@ -15,11 +15,7 @@ class ActivityImportParser {
     final source = _detectSource(payload.sourceHint, sharedText, sharedUrl);
     final distance = _parseDistance(sharedText);
     final detectedPace = _parsePace(sharedText);
-    final duration = _resolveDuration(
-      detected: _parseDuration(sharedText),
-      distanceMeters: distance,
-      paceSecondsPerKm: detectedPace,
-    );
+    final duration = _parseDuration(sharedText);
     final start = _parseStartDateTime(sharedText);
     final sourceReference = source == ActivityImportSource.strava
         ? extractStravaSourceReference(sharedUrl)
@@ -44,6 +40,9 @@ class ActivityImportParser {
     if (hinted != ActivityImportSource.unknown) return hinted;
     final textSource = _sourceIn(text);
     if (textSource != ActivityImportSource.unknown) return textSource;
+    if (RegExp(r'\btotal\s*time\b', caseSensitive: false).hasMatch(text)) {
+      return ActivityImportSource.garmin;
+    }
     return _sourceIn(url ?? '');
   }
 
@@ -92,23 +91,77 @@ class ActivityImportParser {
   }
 
   int? _parseDuration(String text) {
-    final words = RegExp(
-      r'(?:(\d+)\s*(?:h|hours?)\b\s*)?(?:(\d+)\s*(?:m|minutes?)\b\s*)?(?:(\d+)\s*(?:s|seconds?)\b)?',
+    final labels = RegExp(
+      r'\b(total\s*time|moving\s*time|duration|time)\b',
       caseSensitive: false,
     ).allMatches(text);
-    for (final match in words) {
-      if (match.group(0)!.trim().isEmpty) continue;
-      final hours = int.tryParse(match.group(1) ?? '') ?? 0;
-      final minutes = int.tryParse(match.group(2) ?? '') ?? 0;
-      final seconds = int.tryParse(match.group(3) ?? '') ?? 0;
-      final total = hours * 3600 + minutes * 60 + seconds;
+    for (final label in labels) {
+      final prefix = text.substring(
+        label.start > 8 ? label.start - 8 : 0,
+        label.start,
+      );
+      if (RegExp(r'start(?:ed)?\s*$', caseSensitive: false).hasMatch(prefix)) {
+        continue;
+      }
+      final end = (label.end + 96).clamp(0, text.length);
+      final value = _durationIn(
+        text.substring(label.end, end),
+        allowSingleMinute: true,
+      );
+      if (value != null) return value;
+    }
+
+    return _durationIn(text, allowSingleMinute: false);
+  }
+
+  int? _durationIn(String text, {required bool allowSingleMinute}) {
+    final hours = RegExp(
+      r'(?<!\d)(\d+)\s*(?:h|hours?)\b(?:\s*(\d+)\s*(?:m|minutes?)\b)?(?:\s*(\d+)\s*(?:s|seconds?)\b)?',
+      caseSensitive: false,
+    ).firstMatch(text);
+    if (hours != null) {
+      final total =
+          int.parse(hours.group(1)!) * 3600 +
+          (int.tryParse(hours.group(2) ?? '') ?? 0) * 60 +
+          (int.tryParse(hours.group(3) ?? '') ?? 0);
       if (total > 0) return total;
     }
 
-    for (final match in RegExp(
-      r'(?<!\d)(\d{1,2}):([0-5]\d)(?::([0-5]\d))?(?!\s*/\s*km)',
+    final minutesSeconds = RegExp(
+      r'(?<!\d)(\d+)\s*(?:m|minutes?)\b\s*(\d+)\s*(?:s|seconds?)\b',
       caseSensitive: false,
+    ).firstMatch(text);
+    if (minutesSeconds != null) {
+      return int.parse(minutesSeconds.group(1)!) * 60 +
+          int.parse(minutesSeconds.group(2)!);
+    }
+
+    if (allowSingleMinute) {
+      final minutes = RegExp(
+        r'(?<![\d.])(\d{1,3})\s*(?:m|minutes?)\b(?!\s*(?:\/|i|l|\|)\s*k\s*m)',
+        caseSensitive: false,
+      ).firstMatch(text);
+      if (minutes != null) return int.parse(minutes.group(1)!) * 60;
+    }
+
+    for (final match in RegExp(
+      r'(?<!\d)(\d{1,2}):([0-5]\d)(?::([0-5]\d))?',
     ).allMatches(text)) {
+      final suffix = text.substring(
+        match.end,
+        (match.end + 12).clamp(0, text.length),
+      );
+      if (_paceSuffix.hasMatch(suffix)) continue;
+      final prefix = text.substring(
+        (match.start - 18).clamp(0, text.length),
+        match.start,
+      );
+      if (RegExp(
+        r'(?:\bat|start(?:ed)?(?:\s+time)?)\s*$',
+        caseSensitive: false,
+      ).hasMatch(prefix)) {
+        continue;
+      }
       final first = int.parse(match.group(1)!);
       final second = int.parse(match.group(2)!);
       final third = int.tryParse(match.group(3) ?? '');
@@ -121,51 +174,30 @@ class ActivityImportParser {
   }
 
   int? _parsePace(String text) {
-    final match = RegExp(
-      r'(?<!\d)(\d{1,2}):([0-5]\d)\s*(?:/|per\s*)km\b',
+    final labeled = RegExp(
+      r'\b(?:avg(?:erage)?\.?\s*)?pace\b[^\d]{0,20}(\d{1,2}):([0-5]\d)',
       caseSensitive: false,
     ).firstMatch(text);
+    final match =
+        labeled ??
+        RegExp(
+          r'(?<!\d)(\d{1,2}):([0-5]\d)\s*(?:(?:/|i|l|\|)\s*k\s*m|per\s*k\s*m)\b',
+          caseSensitive: false,
+        ).firstMatch(text);
     if (match == null) return null;
     return int.parse(match.group(1)!) * 60 + int.parse(match.group(2)!);
   }
 
-  int? _durationFromDistanceAndPace(double? distanceMeters, int? pace) {
-    if (distanceMeters == null ||
-        distanceMeters <= 0 ||
-        pace == null ||
-        pace <= 0) {
-      return null;
-    }
-    final duration = (pace * distanceMeters / 1000).round();
-    return duration > 0 ? duration : null;
-  }
-
-  int? _resolveDuration({
-    required int? detected,
-    required double? distanceMeters,
-    required int? paceSecondsPerKm,
-  }) {
-    final calculated = _durationFromDistanceAndPace(
-      distanceMeters,
-      paceSecondsPerKm,
-    );
-    if (detected == null) return calculated;
-    if (calculated == null) return detected;
-
-    final difference = (detected - calculated).abs();
-
-    // Tesseract can read a two-line Strava value such as `25m` / `18s`
-    // as only `25m`. An exact minute next to a coherent distance and pace is
-    // therefore completed from those two independent metrics.
-    if (detected % 60 == 0 && difference > 0 && difference <= 59) {
-      return calculated;
-    }
-
-    // A non-trivial mismatch must remain visible to the reviewer. It may be an
-    // OCR error, but silently replacing it would also hide a genuinely
-    // inconsistent source card.
-    return detected;
-  }
+  String _normalizeOcrText(String text) => text
+      .replaceAll('\u2019', "'")
+      .replaceAll('\u2032', "'")
+      .replaceAll('\u201c', '"')
+      .replaceAll('\u201d', '"')
+      .replaceAll('\u2033', '"')
+      .replaceAllMapped(
+        RegExp(r"(?<!\d)(\d{1,2})\s*'\s*([0-5]\d)"),
+        (match) => '${match.group(1)}:${match.group(2)}',
+      );
 
   DateTime? _parseStartDateTime(String text) {
     DateTime? date;
@@ -257,4 +289,9 @@ class ActivityImportParser {
     'nov': 11,
     'dec': 12,
   };
+
+  static final _paceSuffix = RegExp(
+    r'^\s*(?:(?:/|i|l|\|)\s*k\s*m|per\s*k\s*m)\b',
+    caseSensitive: false,
+  );
 }

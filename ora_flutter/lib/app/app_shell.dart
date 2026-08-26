@@ -6,6 +6,7 @@ import 'package:flutter/services.dart';
 
 import '../core/theme/ora_theme.dart';
 import '../core/platform/iphone_pwa_share_setup.dart';
+import '../core/platform/pwa_install_controller.dart';
 import '../core/network/network_reachability_monitor.dart';
 import '../features/auth/application/auth_controller.dart';
 import '../features/auth/domain/auth_models.dart';
@@ -76,11 +77,13 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
   late final ActivityImportBridgeApi _importBridgeApi;
   late final bool _ownsImportInbox;
   ActivityImportController? _importController;
+  late final PwaInstallController _pwaInstallController;
 
   @override
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
+    _pwaInstallController = PwaInstallController();
     featureController = widget.featureControllerFactory(widget.session);
     _ownsImportInbox = widget.importInbox == null;
     _importInbox = widget.importInbox ?? ActivityImportInbox();
@@ -128,6 +131,7 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
     _importInbox.removeListener(_onImportInboxChanged);
     if (_ownsImportInbox) _importInbox.dispose();
     _importController?.dispose();
+    _pwaInstallController.dispose();
     featureController.dispose();
     trackingController.dispose();
     super.dispose();
@@ -294,7 +298,10 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
   @override
   Widget build(BuildContext context) {
     final screens = <Widget>[
-      HomeScreen(controller: featureController),
+      HomeScreen(
+        controller: featureController,
+        pwaInstallController: _pwaInstallController,
+      ),
       QuestScreen(controller: featureController),
       RunScreen(controller: trackingController),
       GuildScreen(controller: featureController),

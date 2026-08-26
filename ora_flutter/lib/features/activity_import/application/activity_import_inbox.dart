@@ -178,7 +178,7 @@ class ActivityImportInbox extends ChangeNotifier {
               ActivityImportLaunch._string(value['imageMimeType']) ??
               'image/jpeg',
           name: ActivityImportLaunch._string(value['imageName']),
-        ),
+        ).normalized(),
       );
     }
     final payload = ActivitySharePayload(

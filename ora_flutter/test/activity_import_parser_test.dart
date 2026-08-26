@@ -61,25 +61,83 @@ Distance
   });
 
   test(
-    'calculates duration from distance and pace when Time OCR is missing',
+    'does not invent duration from distance and pace when Time is missing',
     () {
       final result = parser.parse(payload('Distance 5.04 km\nPace 7:41 /km'));
 
       expect(result.distanceMeters, 5040);
       expect(result.detectedPaceSecondsPerKm, 461);
-      expect(result.durationSeconds, 2323);
-      expect(result.calculatedPaceSecondsPerKm, 461);
+      expect(result.durationSeconds, isNull);
+      expect(result.calculatedPaceSecondsPerKm, isNull);
     },
   );
 
-  test('repairs a missing seconds line in Strava Time OCR', () {
+  test('keeps an explicitly labelled whole-minute Strava duration', () {
     final result = parser.parse(
       payload('Distance\n3.03 km\nTime\n25m\nPace\n8:21 /km'),
     );
 
     expect(result.distanceMeters, 3030);
     expect(result.detectedPaceSecondsPerKm, 501);
-    expect(result.durationSeconds, 1518);
+    expect(result.durationSeconds, 1500);
+    expect(result.calculatedPaceSecondsPerKm, 495);
+  });
+
+  test('maps Garmin Total Time without requiring a Garmin logo', () {
+    final result = parser.parse(
+      payload(
+        'Morning Run\nDistance 10.00 km\nTotal Time 1:02:03\nAvg Pace 6:12 /km',
+      ),
+    );
+
+    expect(result.source, ActivityImportSource.garmin);
+    expect(result.distanceMeters, 10000);
+    expect(result.durationSeconds, 3723);
+    expect(result.calculatedPaceSecondsPerKm, 372);
+  });
+
+  test('maps Huawei Duration and ignores calories on a photo card', () {
+    final result = parser.parse(
+      payload(
+        'HUAWEI HEALTH\nCalories 463 kcal\nDistance 5.02 km\n'
+        'Duration 00:42:16\nAverage Pace 8\'25"',
+      ),
+    );
+
+    expect(result.source, ActivityImportSource.huawei);
+    expect(result.distanceMeters, 5020);
+    expect(result.durationSeconds, 2536);
+    expect(result.detectedPaceSecondsPerKm, 505);
+    expect(result.calculatedPaceSecondsPerKm, 505);
+  });
+
+  test('never interprets a Huawei calorie value as a metric', () {
+    final result = parser.parse(
+      payload('HUAWEI HEALTH\nCalories 463 kcal\nAverage Heart Rate 151 bpm'),
+    );
+
+    expect(result.distanceMeters, isNull);
+    expect(result.durationSeconds, isNull);
+  });
+
+  test('maps Strava Moving Time and tolerates ikm pace OCR', () {
+    final result = parser.parse(
+      payload('STRAVA\nDistance 1.00 km\nMoving Time 17:11\nPace 17\'11" ikm'),
+    );
+
+    expect(result.distanceMeters, 1000);
+    expect(result.durationSeconds, 1031);
+    expect(result.detectedPaceSecondsPerKm, 1031);
+    expect(result.calculatedPaceSecondsPerKm, 1031);
+  });
+
+  test('distance and duration are sufficient and pace is recalculated', () {
+    final result = parser.parse(payload('Distance 5 km\nDuration 30:00'));
+
+    expect(result.distanceMeters, 5000);
+    expect(result.durationSeconds, 1800);
+    expect(result.detectedPaceSecondsPerKm, isNull);
+    expect(result.calculatedPaceSecondsPerKm, 360);
   });
 
   test('detects source and parses duration written with units', () {

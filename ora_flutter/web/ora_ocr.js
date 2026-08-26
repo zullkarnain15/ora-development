@@ -63,7 +63,10 @@ function oraCanvasSize(width, height) {
 }
 
 function drawOraVariant(image, mode) {
-  const size = oraCanvasSize(image.width, image.height);
+  const cropTop = Math.max(0, Math.min(0.8, mode.cropTop || 0));
+  const sourceY = Math.round(image.height * cropTop);
+  const sourceHeight = Math.max(1, image.height - sourceY);
+  const size = oraCanvasSize(image.width, sourceHeight);
   const canvas = document.createElement('canvas');
   canvas.width = size.width;
   canvas.height = size.height;
@@ -74,7 +77,17 @@ function drawOraVariant(image, mode) {
   // that otherwise turn into unreadable dark text when OCR decodes the image.
   context.fillStyle = mode.background;
   context.fillRect(0, 0, size.width, size.height);
-  context.drawImage(image.source, 0, 0, size.width, size.height);
+  context.drawImage(
+    image.source,
+    0,
+    sourceY,
+    image.width,
+    sourceHeight,
+    0,
+    0,
+    size.width,
+    size.height,
+  );
 
   if (mode.filter === 'normal') return canvas.toDataURL('image/png');
   const pixels = context.getImageData(0, 0, size.width, size.height);
@@ -101,7 +114,7 @@ function scoreOraActivityText(value) {
       /\b\d+\s*(?:h|hours?)\s*\d+\s*(?:m|minutes?)\b/i.test(text) ||
       /\b\d{1,2}:[0-5]\d(?::[0-5]\d)?\b/.test(text)) score += 5;
   if (/\b\d{1,2}:[0-5]\d\s*(?:\/|per\s*)\s*k\s*m\b/i.test(text)) score += 3;
-  if (/\b(?:distance|pace|time)\b/i.test(text)) score += 1;
+  if (/\b(?:distance|pace|time|moving\s*time|total\s*time|duration)\b/i.test(text)) score += 1;
 
   const distance = text.match(/\b(\d+(?:[.,]\d+)?)\s*(?:k\s*m|km)\b/i);
   const pace = text.match(/\b(\d{1,2}):([0-5]\d)\s*(?:\/|per\s*)\s*k\s*m\b/i);
@@ -147,11 +160,14 @@ function oraDurationSeconds(text) {
 
 async function recognizeOraVariants(worker, image) {
   const variants = [
-    {name: 'normalized-white', background: '#ffffff', filter: 'normal', contrast: 1, threshold: null, invert: false},
-    {name: 'grayscale-contrast', background: '#ffffff', filter: 'grayscale', contrast: 2.2, threshold: null, invert: false},
-    {name: 'threshold', background: '#ffffff', filter: 'grayscale', contrast: 2.4, threshold: 158, invert: false},
-    {name: 'invert-threshold', background: '#000000', filter: 'grayscale', contrast: 2.2, threshold: 116, invert: true},
-    {name: 'normalized-black', background: '#000000', filter: 'normal', contrast: 1, threshold: null, invert: false},
+    {name: 'normalized-white', background: '#ffffff', filter: 'normal', contrast: 1, threshold: null, invert: false, cropTop: 0},
+    {name: 'grayscale-contrast', background: '#ffffff', filter: 'grayscale', contrast: 2.2, threshold: null, invert: false, cropTop: 0},
+    {name: 'threshold', background: '#ffffff', filter: 'grayscale', contrast: 2.4, threshold: 158, invert: false, cropTop: 0},
+    {name: 'invert-threshold', background: '#000000', filter: 'grayscale', contrast: 2.2, threshold: 116, invert: true, cropTop: 0},
+    {name: 'normalized-black', background: '#000000', filter: 'normal', contrast: 1, threshold: null, invert: false, cropTop: 0},
+    // Huawei photo templates place their useful statistics in the lower area.
+    {name: 'lower-stats-contrast', background: '#ffffff', filter: 'grayscale', contrast: 2.3, threshold: null, invert: false, cropTop: 0.5},
+    {name: 'lower-stats-threshold', background: '#ffffff', filter: 'grayscale', contrast: 2.4, threshold: 154, invert: false, cropTop: 0.5},
   ];
   let best = '';
   let bestScore = -1;
@@ -170,9 +186,35 @@ async function recognizeOraVariants(worker, image) {
   return best;
 }
 
+function oraActualImageMimeType(bytes, declaredMimeType) {
+  if (bytes.length >= 8 && bytes[0] === 0x89 && bytes[1] === 0x50 &&
+      bytes[2] === 0x4e && bytes[3] === 0x47 && bytes[4] === 0x0d &&
+      bytes[5] === 0x0a && bytes[6] === 0x1a && bytes[7] === 0x0a) {
+    return 'image/png';
+  }
+  if (bytes.length >= 3 && bytes[0] === 0xff && bytes[1] === 0xd8 &&
+      bytes[2] === 0xff) {
+    return 'image/jpeg';
+  }
+  if (bytes.length >= 12) {
+    const ascii = (start, length) => String.fromCharCode(...bytes.slice(start, start + length));
+    if (ascii(0, 4) === 'RIFF' && ascii(8, 4) === 'WEBP') return 'image/webp';
+    if (ascii(4, 4) === 'ftyp') {
+      const brand = ascii(8, 4).toLowerCase();
+      if (brand === 'avif' || brand === 'avis') return 'image/avif';
+      if (['heic', 'heix', 'hevc', 'hevx', 'mif1', 'msf1'].includes(brand)) {
+        return 'image/heic';
+      }
+    }
+  }
+  const declared = String(declaredMimeType || '').split(';')[0].trim().toLowerCase();
+  return declared.startsWith('image/') ? declared : 'image/jpeg';
+}
+
 self.oraRecognizeActivityImage = async function(bytes, mimeType) {
   const Tesseract = await loadOraTesseract();
-  const blob = new Blob([bytes], {type: mimeType || 'image/jpeg'});
+  const normalizedMimeType = oraActualImageMimeType(bytes, mimeType);
+  const blob = new Blob([bytes], {type: normalizedMimeType});
   const image = await decodeOraImage(blob);
   let worker = null;
   try {

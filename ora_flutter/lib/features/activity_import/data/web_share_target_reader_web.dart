@@ -46,7 +46,7 @@ Future<ActivitySharePayload?> _readPayload(Uri uri, String shareId) async {
                 imageResponse.headers['content-type'] ??
                 'image/jpeg',
             name: _string(decoded['imageName']),
-          ),
+          ).normalized(),
         );
       }
     }

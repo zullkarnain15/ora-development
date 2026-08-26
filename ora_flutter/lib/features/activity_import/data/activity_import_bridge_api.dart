@@ -17,7 +17,9 @@ class AppsScriptActivityImportBridgeApi implements ActivityImportBridgeApi {
 
   @override
   Future<String> createTemporaryPayload(ActivitySharePayload payload) async {
-    final image = payload.images.isEmpty ? null : payload.images.first;
+    final image = payload.images.isEmpty
+        ? null
+        : payload.images.first.normalized();
     final data = await client.call('createImportToken', {
       'sharedText': payload.sharedText,
       'sharedUrl': payload.sharedUrl,
@@ -65,7 +67,7 @@ class AppsScriptActivityImportBridgeApi implements ActivityImportBridgeApi {
           bytes: bytes,
           mimeType: _string(payload['imageMimeType']) ?? 'image/jpeg',
           name: _string(payload['imageName']),
-        ),
+        ).normalized(),
       );
     }
     final receivedAt = DateTime.tryParse(_string(payload['receivedAt']) ?? '');

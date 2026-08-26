@@ -17,9 +17,10 @@ class _WebActivityOcrEngine implements ActivityOcrEngine {
 
   @override
   Future<String> recognize(ActivityShareImage image) async {
+    final normalized = image.normalized();
     final result = await _recognizeActivityImage(
-      image.bytes.toJS,
-      image.mimeType,
+      normalized.bytes.toJS,
+      normalized.mimeType,
     ).toDart;
     return result.toDart.trim();
   }

@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:ora_flutter/core/network/apps_script_client.dart';
+import 'package:ora_flutter/core/platform/pwa_install_controller.dart';
+import 'package:ora_flutter/core/platform/pwa_install_platform.dart';
 import 'package:ora_flutter/core/theme/ora_theme.dart';
 import 'package:ora_flutter/features/activity/data/activity_store.dart';
 import 'package:ora_flutter/features/activity/domain/final_activity.dart';
@@ -23,6 +25,24 @@ class _NeverTransport implements ApiTransport {
     required Duration connectTimeout,
     required Duration readTimeout,
   }) => throw UnimplementedError();
+}
+
+class _InstallPlatform implements PwaInstallPlatform {
+  _InstallPlatform(this.currentState);
+
+  PwaInstallState currentState;
+
+  @override
+  PwaInstallState get state => currentState;
+
+  @override
+  Future<bool> promptInstall() async => true;
+
+  @override
+  void start(void Function() onStateChanged) {}
+
+  @override
+  void stop() {}
 }
 
 final _session = UserSession(
@@ -74,6 +94,48 @@ void main() {
     expect(find.byKey(const Key('home_check_in')), findsOneWidget);
     expect(find.text('ADVENTURE STAMP'), findsOneWidget);
     expect(find.byIcon(Icons.qr_code_scanner), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('Home shows the compact iOS install guide above its title', (
+    tester,
+  ) async {
+    final installController = PwaInstallController(
+      platform: _InstallPlatform(PwaInstallState.iosInstructions),
+    );
+    addTearDown(installController.dispose);
+    final controller = _controller()
+      ..statsPhase = LoadPhase.ready
+      ..activityPhase = LoadPhase.ready;
+
+    await tester.pumpWidget(
+      _host(
+        HomeScreen(
+          controller: controller,
+          pwaInstallController: installController,
+        ),
+      ),
+    );
+
+    final banner = find.byKey(const Key('home_install_ora_banner'));
+    expect(banner, findsOneWidget);
+    expect(
+      find.text('Buka di Safari → Share → Add to Home Screen'),
+      findsOneWidget,
+    );
+    expect(
+      tester.getTopLeft(banner).dy,
+      lessThan(tester.getTopLeft(find.text('ORA')).dy),
+    );
+
+    await tester.tap(find.byKey(const Key('home_install_ora_action')));
+    await tester.pumpAndSettle();
+    expect(
+      find.text(
+        'Buka halaman ORA di Safari, tekan Share, lalu pilih Add to Home Screen.',
+      ),
+      findsOneWidget,
+    );
     expect(tester.takeException(), isNull);
   });
 

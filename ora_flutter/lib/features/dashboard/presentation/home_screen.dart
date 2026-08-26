@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 
 import '../../../core/theme/ora_theme.dart';
+import '../../../core/platform/pwa_install_controller.dart';
+import '../../../core/platform/pwa_install_platform.dart';
 import '../../mascot/awan_home_greeting.dart';
 import '../../../shared/widgets/ora_widgets.dart';
 import '../../activity/domain/final_activity.dart';
@@ -11,8 +13,13 @@ import '../domain/feature_models.dart';
 import 'formatters.dart';
 
 class HomeScreen extends StatelessWidget {
-  const HomeScreen({super.key, required this.controller});
+  const HomeScreen({
+    super.key,
+    required this.controller,
+    this.pwaInstallController,
+  });
   final FeatureController controller;
+  final PwaInstallController? pwaInstallController;
 
   @override
   Widget build(BuildContext context) => AnimatedBuilder(
@@ -26,6 +33,8 @@ class HomeScreen extends StatelessWidget {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
+              if (pwaInstallController case final installController?)
+                _PwaInstallBanner(controller: installController),
               const OraScreenTitle(
                 title: 'ORA',
                 subtitle: 'OTO RUNNERS ADVENTURE',
@@ -292,6 +301,104 @@ class HomeScreen extends StatelessWidget {
           ],
         ),
       );
+}
+
+class _PwaInstallBanner extends StatelessWidget {
+  const _PwaInstallBanner({required this.controller});
+
+  final PwaInstallController controller;
+
+  @override
+  Widget build(BuildContext context) => AnimatedBuilder(
+    animation: controller,
+    builder: (context, _) {
+      final state = controller.state;
+      if (state == PwaInstallState.hidden) return const SizedBox.shrink();
+      final description = switch (state) {
+        PwaInstallState.install =>
+          'Install untuk akses ORA lebih cepat dari layar utama.',
+        PwaInstallState.openInChrome =>
+          'Buka halaman ini di Chrome untuk menginstal ORA.',
+        PwaInstallState.iosInstructions =>
+          'Buka di Safari → Share → Add to Home Screen',
+        PwaInstallState.hidden => '',
+      };
+      final actionLabel = switch (state) {
+        PwaInstallState.install => 'INSTALL ORA',
+        PwaInstallState.openInChrome => 'BUKA DI CHROME',
+        PwaInstallState.iosInstructions => 'LIHAT PANDUAN',
+        PwaInstallState.hidden => '',
+      };
+      return Padding(
+        padding: const EdgeInsets.only(bottom: 12),
+        child: OraCard(
+          key: const Key('home_install_ora_banner'),
+          padding: const EdgeInsets.all(14),
+          borderColor: OraColors.gold,
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.center,
+            children: [
+              const Icon(Icons.install_mobile, color: OraColors.gold, size: 30),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Text(
+                      'INSTALL ORA',
+                      style: OraTextStyles.displaySmall,
+                    ),
+                    const SizedBox(height: 5),
+                    Text(
+                      description,
+                      style: Theme.of(context).textTheme.bodySmall,
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(width: 10),
+              OutlinedButton(
+                key: const Key('home_install_ora_action'),
+                onPressed: () => _handleAction(context, state),
+                child: Text(actionLabel),
+              ),
+            ],
+          ),
+        ),
+      );
+    },
+  );
+
+  Future<void> _handleAction(
+    BuildContext context,
+    PwaInstallState state,
+  ) async {
+    if (state == PwaInstallState.install) {
+      await controller.promptInstall();
+      return;
+    }
+    final title = state == PwaInstallState.openInChrome
+        ? 'BUKA DI CHROME'
+        : 'INSTALL ORA';
+    final guide = state == PwaInstallState.openInChrome
+        ? 'Buka menu browser, pilih Open in Chrome, lalu tekan INSTALL ORA. '
+              'ORA tidak akan memindahkan halaman secara otomatis.'
+        : 'Buka halaman ORA di Safari, tekan Share, lalu pilih Add to Home Screen.';
+    if (!context.mounted) return;
+    await showDialog<void>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: Text(title),
+        content: Text(guide),
+        actions: [
+          FilledButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('OK'),
+          ),
+        ],
+      ),
+    );
+  }
 }
 
 class _AdventureStampIcon extends StatelessWidget {

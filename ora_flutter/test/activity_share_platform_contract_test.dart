@@ -54,11 +54,21 @@ void main() {
 
     final bootstrap = File('web/flutter_bootstrap.js').readAsStringSync();
     final worker = File('web/ora_service_worker.js').readAsStringSync();
+    final ocr = File('web/ora_ocr.js').readAsStringSync();
+    final install = File('web/ora_pwa_install.js').readAsStringSync();
+    final index = File('web/index.html').readAsStringSync();
     expect(bootstrap, contains('serviceWorkerUrl: `ora_service_worker.js'));
     expect(worker, contains("request.formData()"));
     expect(worker, contains("form.getAll('activity_images')"));
     expect(worker, contains("type: 'ORA_ACTIVITY_SHARE'"));
     expect(worker, contains('client.postMessage(message)'));
     expect(worker, contains("Response.redirect(destination.toString(), 303)"));
+    expect(ocr, contains('oraActualImageMimeType'));
+    expect(ocr, contains("canvas.toDataURL('image/png')"));
+    expect(ocr, contains("name: 'lower-stats-contrast'"));
+    expect(index, contains('src="ora_pwa_install.js"'));
+    expect(install, contains("window.addEventListener('beforeinstallprompt'"));
+    expect(install, contains("window.addEventListener('appinstalled'"));
+    expect(install, contains('await prompt.prompt()'));
   });
 }
