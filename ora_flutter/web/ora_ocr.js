@@ -196,21 +196,45 @@ function isOraStravaCard(text) {
     (/\bdistance\b/i.test(value) && /\bpace\b/i.test(value) && /\btime\b/i.test(value));
 }
 
-function oraTimeColumnCrop(result, image) {
-  const words = result && result.data && Array.isArray(result.data.words) ? result.data.words : [];
-  const timeWord = words.find((word) => /^time$/i.test(String(word.text || '').replace(/[^a-z]/gi, '')));
-  const box = timeWord && timeWord.bbox;
+function oraWordsFromResult(result) {
+  const data = result && result.data;
+  if (!data) return [];
+  if (Array.isArray(data.words)) return data.words;
+  const words = [];
+  for (const block of Array.isArray(data.blocks) ? data.blocks : []) {
+    for (const paragraph of Array.isArray(block.paragraphs) ? block.paragraphs : []) {
+      for (const line of Array.isArray(paragraph.lines) ? paragraph.lines : []) {
+        words.push(...(Array.isArray(line.words) ? line.words : []));
+      }
+    }
+  }
+  return words;
+}
+
+function oraMetricColumnCrop(result, image, label, leftPadding, width) {
+  const labelWord = oraWordsFromResult(result).find(
+    (word) => String(word.text || '').replace(/[^a-z]/gi, '').toLowerCase() === label,
+  );
+  const box = labelWord && labelWord.bbox;
   if (!box || !Number.isFinite(box.x0) || !Number.isFinite(box.y0)) return null;
   const labelX = box.x0;
   const labelY = box.y0;
-  const x = Math.max(0, Math.min(image.width - 1, labelX - image.width * 0.12));
+  const x = Math.max(0, Math.min(image.width - 1, labelX - image.width * leftPadding));
   const y = Math.max(0, Math.min(image.height - 1, labelY - image.height * 0.04));
   return {
     x: x / image.width,
     y: y / image.height,
-    width: Math.min(image.width - x, image.width * 0.45) / image.width,
+    width: Math.min(image.width - x, image.width * width) / image.width,
     height: Math.min(image.height - y, image.height * 0.25) / image.height,
   };
+}
+
+function oraTimeColumnCrop(result, image) {
+  return oraMetricColumnCrop(result, image, 'time', 0.12, 0.45);
+}
+
+function oraDistanceColumnCrop(result, image) {
+  return oraMetricColumnCrop(result, image, 'distance', 0.04, 0.36);
 }
 
 async function recognizeOraGenericVariants(worker, image) {
@@ -241,6 +265,36 @@ async function recognizeOraGenericVariants(worker, image) {
   return best;
 }
 
+function scoreOraMetricCrop(text, metric) {
+  if (metric === 'distance') {
+    if (/\b\d+[.,]\d+\s*k\s*m\b/i.test(text)) return 12;
+    if (/\b\d+\s*k\s*m\b/i.test(text)) return 5;
+    return 0;
+  }
+  if (oraDurationSeconds(text) === null) return 0;
+  return /\b\d+\s*m\s*[\dIl]+\s*s\b/i.test(text) ? 12 : 8;
+}
+
+async function recognizeOraMetricCrop(worker, image, crop, metric) {
+  if (!crop) return '';
+  const variants = [
+    {name: `${metric}-contrast`, background: '#000000', filter: 'grayscale', contrast: 2.35, threshold: null, invert: false, crop, scale: 3, sharpen: 1.15},
+    {name: `${metric}-threshold-145`, background: '#000000', filter: 'grayscale', contrast: 2.6, threshold: 145, invert: false, crop, scale: 3, sharpen: 1.2},
+  ];
+  let best = '';
+  let bestScore = -1;
+  for (const variant of variants) {
+    const result = await worker.recognize(drawOraVariant(image, variant));
+    const text = oraTextFromResult(result).trim();
+    const score = scoreOraMetricCrop(text, metric);
+    if (score > bestScore || (score === bestScore && text.length > best.length)) {
+      best = text;
+      bestScore = score;
+    }
+  }
+  return best;
+}
+
 async function recognizeOraStravaVariants(worker, image, originalResult) {
   const variants = [
     // The original PNG is recognized directly before these canvas passes.
@@ -261,15 +315,14 @@ async function recognizeOraStravaVariants(worker, image, originalResult) {
     }
   }
 
-  const timeCrop = oraTimeColumnCrop(originalResult, image);
-  if (timeCrop) {
-    const result = await worker.recognize(drawOraVariant(image, {
-      name: 'strava-time-column', background: '#000000', filter: 'grayscale', contrast: 2.7,
-      threshold: 165, invert: false, crop: timeCrop, scale: 3, sharpen: 1.25,
-    }));
-    const timeText = oraTextFromResult(result).trim();
-    if (timeText) best = `${best}\nTime\n${timeText}`;
-  }
+  const distanceText = await recognizeOraMetricCrop(
+    worker, image, oraDistanceColumnCrop(originalResult, image), 'distance',
+  );
+  if (distanceText) best = `${best}\nDistance\n${distanceText}`;
+  const timeText = await recognizeOraMetricCrop(
+    worker, image, oraTimeColumnCrop(originalResult, image), 'time',
+  );
+  if (timeText) best = `${best}\nTime\n${timeText}`;
   return best;
 }
 
@@ -310,7 +363,11 @@ self.oraRecognizeActivityImage = async function(bytes, mimeType) {
     // transparent Strava overlays before any canvas preprocessing happens.
     let originalResult = null;
     try {
-      originalResult = await worker.recognize(blob);
+      originalResult = await worker.recognize(
+        blob,
+        {},
+        {text: true, blocks: true},
+      );
     } catch (_) {
       // Formats that the browser can draw but Tesseract cannot read directly
       // retain the existing generic canvas pipeline.

@@ -69,8 +69,9 @@ void main() {
     expect(ocr, contains('isOraStravaCard'));
     expect(ocr, contains('recognizeOraStravaVariants'));
     expect(ocr, contains('oraTimeColumnCrop'));
-    expect(ocr, contains("name: 'strava-time-column'"));
-    expect(ocr, contains('worker.recognize(blob)'));
+    expect(ocr, contains('oraDistanceColumnCrop'));
+    expect(ocr, contains('recognizeOraMetricCrop'));
+    expect(ocr, contains('{text: true, blocks: true}'));
     expect(index, contains('src="ora_pwa_install.js"'));
     expect(install, contains("window.addEventListener('beforeinstallprompt'"));
     expect(install, contains("window.addEventListener('appinstalled'"));

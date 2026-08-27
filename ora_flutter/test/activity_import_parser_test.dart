@@ -108,6 +108,29 @@ Distance        Pace          Time
     expect(result.derivedFromPace, isFalse);
   });
 
+  test('restores a dropped decimal in a Strava card distance', () {
+    final result = parser.parse(
+      payload('STRAVA\nDistance 426 km\nPace 6:27 /km\nTime unreadable'),
+    );
+
+    expect(result.distanceMeters, 4260);
+    expect(result.durationSeconds, 1649);
+    expect(result.derivedFromPace, isTrue);
+  });
+
+  test('prefers a valid decimal distance from another Strava OCR pass', () {
+    final result = parser.parse(
+      payload('''
+STRAVA
+Distance 426 km Pace 6:27 /km Time unreadable
+Distance 4.26 km
+'''),
+    );
+
+    expect(result.distanceMeters, 4260);
+    expect(result.durationSeconds, 1649);
+  });
+
   test(
     'does not invent duration from distance and pace when Time is missing',
     () {

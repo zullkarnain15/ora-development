@@ -23,7 +23,7 @@ class ActivityImportParser {
       ...sharedUrls,
     ]);
     final source = _detectSource(payload.sourceHint, sharedText, sharedUrl);
-    final distance = _parseDistance(sharedText);
+    final distance = _parseDistance(sharedText, source: source);
     final detectedPace = _parsePace(sharedText);
     final duration = _parseDuration(
       sharedText,
@@ -79,13 +79,36 @@ class ActivityImportParser {
     return ActivityImportSource.unknown;
   }
 
-  double? _parseDistance(String text) {
-    final kilometers = RegExp(
+  double? _parseDistance(String text, {required ActivityImportSource source}) {
+    final kilometerMatches = RegExp(
       r'(\d+(?:[.,]\d+)?)\s*(?:k\s*m|kilomet(?:er|re)s?)\b',
       caseSensitive: false,
-    ).firstMatch(text);
-    final kilometersValue = _positiveNumber(kilometers?.group(1));
-    if (kilometersValue != null) return kilometersValue * 1000;
+    ).allMatches(text).toList(growable: false);
+    if (source != ActivityImportSource.strava && kilometerMatches.isNotEmpty) {
+      final value = _positiveNumber(kilometerMatches.first.group(1));
+      if (value != null) return value * 1000;
+    }
+    for (final match in kilometerMatches) {
+      final raw = match.group(1)!;
+      if (!raw.contains('.') && !raw.contains(',')) continue;
+      final value = _positiveNumber(raw);
+      if (value != null) return value * 1000;
+    }
+    if (source == ActivityImportSource.strava &&
+        _hasStravaDistanceAndPaceLabels(text)) {
+      for (final match in kilometerMatches) {
+        final raw = match.group(1)!;
+        if (raw.contains('.') || raw.contains(',') || raw.length < 3) continue;
+        final value = _positiveNumber(raw);
+        // Strava metric share cards render two decimal places. OCR commonly
+        // drops the decimal point, turning `4.26 km` into `426 km`.
+        if (value != null) return value * 10;
+      }
+    }
+    for (final match in kilometerMatches) {
+      final value = _positiveNumber(match.group(1));
+      if (value != null) return value * 1000;
+    }
 
     final labeledMeters = RegExp(
       r'distance\D{0,24}?(\d+(?:[.,]\d+)?)\s*m\b',
@@ -106,6 +129,10 @@ class ActivityImportParser {
     }
     return null;
   }
+
+  bool _hasStravaDistanceAndPaceLabels(String text) =>
+      RegExp(r'\bdistance\b', caseSensitive: false).hasMatch(text) &&
+      RegExp(r'\bpace\b', caseSensitive: false).hasMatch(text);
 
   double? _positiveNumber(String? value) {
     final parsed = double.tryParse((value ?? '').replaceAll(',', '.'));
