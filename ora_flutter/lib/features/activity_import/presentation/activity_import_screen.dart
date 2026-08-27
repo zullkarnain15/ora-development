@@ -133,19 +133,6 @@ class _ActivityImportScreenState extends State<ActivityImportScreen> {
                   value: _paceText(draft.detectedPaceSecondsPerKm),
                 ),
               ],
-              const SizedBox(height: 18),
-              OraStatLine(
-                label: 'ACTIVITY DATE',
-                value: _dateText(controller.selectedDate),
-              ),
-              const SizedBox(height: 12),
-              OraStatLine(
-                label: 'START TIME',
-                value: _timeText(
-                  controller.selectedHour,
-                  controller.selectedMinute,
-                ),
-              ),
               if (draft.sourceRef case final sourceRef?) ...[
                 const SizedBox(height: 12),
                 OraStatLine(label: 'SOURCE REF', value: sourceRef),
@@ -275,11 +262,3 @@ String _durationText(int? seconds) {
 String _paceText(int? seconds) => seconds == null
     ? '--:-- /KM'
     : '${(seconds ~/ 60).toString().padLeft(2, '0')}:${(seconds % 60).toString().padLeft(2, '0')} /KM';
-
-String _dateText(DateTime? value) => value == null
-    ? 'ACTIVITY DATE'
-    : '${value.day.toString().padLeft(2, '0')}/${value.month.toString().padLeft(2, '0')}/${value.year}';
-
-String _timeText(int? hour, int? minute) => hour == null || minute == null
-    ? 'START TIME'
-    : '${hour.toString().padLeft(2, '0')}:${minute.toString().padLeft(2, '0')}';

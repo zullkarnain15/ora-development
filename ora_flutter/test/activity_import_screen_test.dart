@@ -80,8 +80,10 @@ void main() {
     expect(find.byKey(const Key('import_screenshot')), findsNothing);
     expect(find.byKey(const Key('import_date')), findsNothing);
     expect(find.byKey(const Key('import_time')), findsNothing);
-    expect(find.text('25/08/2026'), findsOneWidget);
-    expect(find.text('06:10'), findsOneWidget);
+    expect(find.text('ACTIVITY DATE'), findsNothing);
+    expect(find.text('START TIME'), findsNothing);
+    expect(find.text('25/08/2026'), findsNothing);
+    expect(find.text('06:10'), findsNothing);
     await tester.pump();
     await tester.drag(find.byType(ListView), const Offset(0, -900));
     await tester.pumpAndSettle();
