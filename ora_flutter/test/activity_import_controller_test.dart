@@ -153,9 +153,6 @@ void main() {
       );
 
       await controller.initialize();
-      controller.updateDate(DateTime(2026, 8, 25));
-      controller.updateTime(6, 10);
-
       expect(await controller.save(), isFalse);
       expect(
         controller.message,
@@ -189,9 +186,6 @@ void main() {
       );
 
       await controller.initialize();
-      controller.updateDate(DateTime(2026, 8, 25));
-      controller.updateTime(18, 30);
-
       expect(controller.draft?.exactDuplicate, isTrue);
       expect(await controller.save(), isFalse);
       expect(controller.message, 'DUPLICATE ACTIVITY – ALREADY SAVED');
@@ -234,9 +228,6 @@ void main() {
       );
 
       await controller.initialize();
-      controller.updateDate(DateTime(2026, 8, 25));
-      controller.updateTime(8, 30);
-
       expect(await controller.save(), isFalse);
       expect(controller.draft?.exactDuplicate, isFalse);
       expect(controller.draft?.possibleDuplicate, isTrue);
@@ -256,7 +247,7 @@ void main() {
         payload: ActivitySharePayload(
           sharedText: 'Strava\n5.00 km\n30:00\n6:00 /km',
           sharedUrl: 'https://www.strava.com/activities/998877',
-          receivedAt: DateTime(2026, 8, 25),
+          receivedAt: DateTime(2026, 8, 25, 6, 10),
         ),
       );
       await inbox.receive(launch);
@@ -267,9 +258,6 @@ void main() {
       );
 
       await controller.initialize();
-      controller.updateDate(DateTime(2026, 8, 25));
-      controller.updateTime(6, 10);
-
       expect(await controller.save(), isTrue);
       expect(controller.phase, ActivityImportPhase.saved);
       expect(controller.message, 'SAVED LOCALLY – SYNC PENDING');
@@ -278,6 +266,10 @@ void main() {
       expect(stored.source, 'STRAVA');
       expect(stored.sourceRef, '998877');
       expect(stored.sourceUrl, 'https://www.strava.com/activities/998877');
+      expect(
+        stored.startDateTimeMillis,
+        DateTime(2026, 8, 25, 6, 10).millisecondsSinceEpoch,
+      );
       controller.featureController.dispose();
       controller.dispose();
       inbox.dispose();

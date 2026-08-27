@@ -81,9 +81,26 @@ class ActivityImportController extends ChangeNotifier {
       if (mergedText.isNotEmpty) {
         payload = payload.copyWith(sharedText: mergedText);
       }
+      final receivedAt = payload.receivedAt;
+      _selectedDate = DateTime(
+        receivedAt.year,
+        receivedAt.month,
+        receivedAt.day,
+      );
+      _selectedHour = receivedAt.hour;
+      _selectedMinute = receivedAt.minute;
       var parsed = parser
           .parse(payload)
-          .copyWith(clearStartDateTime: true, ocrFallbackRequired: false);
+          .copyWith(
+            startDateTime: DateTime(
+              receivedAt.year,
+              receivedAt.month,
+              receivedAt.day,
+              receivedAt.hour,
+              receivedAt.minute,
+            ),
+            ocrFallbackRequired: false,
+          );
       _ocrMetricsRead =
           parsed.distanceMeters != null && parsed.durationSeconds != null;
       await featureController.loadActivities(force: true);

@@ -44,7 +44,7 @@ void main() {
         payload: ActivitySharePayload(
           sharedText: text,
           sharedUrl: 'https://www.strava.com/activities/123',
-          receivedAt: DateTime(2026, 8, 25),
+          receivedAt: DateTime(2026, 8, 25, 6, 10),
         ),
       ),
       inbox: inbox,
@@ -78,8 +78,10 @@ void main() {
     expect(find.byType(TextField), findsNothing);
     expect(find.byKey(const Key('import_reparse')), findsNothing);
     expect(find.byKey(const Key('import_screenshot')), findsNothing);
-    controller.updateDate(DateTime(2026, 8, 25));
-    controller.updateTime(6, 10);
+    expect(find.byKey(const Key('import_date')), findsNothing);
+    expect(find.byKey(const Key('import_time')), findsNothing);
+    expect(find.text('25/08/2026'), findsOneWidget);
+    expect(find.text('06:10'), findsOneWidget);
     await tester.pump();
     await tester.drag(find.byType(ListView), const Offset(0, -900));
     await tester.pumpAndSettle();
@@ -96,16 +98,12 @@ void main() {
     controller.dispose();
   });
 
-  test('date and time must both be explicitly selected', () async {
+  test('date and time are filled from the share receipt time', () async {
     final controller = createController('Strava\n5 km\n30:00');
     await controller.initialize();
-    controller.updateDate(DateTime(2026, 8, 25));
-
     expect(controller.selectedDate, DateTime(2026, 8, 25));
-    expect(controller.draft?.startDateTime, isNull);
-    expect(controller.draft?.canSave, isFalse);
-
-    controller.updateTime(6, 10);
+    expect(controller.selectedHour, 6);
+    expect(controller.selectedMinute, 10);
     expect(controller.draft?.startDateTime, DateTime(2026, 8, 25, 6, 10));
     expect(controller.draft?.canSave, isTrue);
 

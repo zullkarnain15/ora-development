@@ -33,6 +33,7 @@ class ActivityImportDraft {
     this.possibleDuplicate = false,
     this.possibleDuplicateConfirmed = false,
     this.ocrFallbackRequired = false,
+    this.derivedFromPace = false,
   });
 
   final ActivityImportSource source;
@@ -47,6 +48,7 @@ class ActivityImportDraft {
   final bool possibleDuplicate;
   final bool possibleDuplicateConfirmed;
   final bool ocrFallbackRequired;
+  final bool derivedFromPace;
 
   int? get startEpochSeconds {
     final start = startDateTime;
@@ -108,6 +110,7 @@ class ActivityImportDraft {
     bool? possibleDuplicate,
     bool? possibleDuplicateConfirmed,
     bool? ocrFallbackRequired,
+    bool? derivedFromPace,
   }) => ActivityImportDraft(
     source: source ?? this.source,
     payload: payload ?? this.payload,
@@ -129,5 +132,6 @@ class ActivityImportDraft {
     possibleDuplicateConfirmed:
         possibleDuplicateConfirmed ?? this.possibleDuplicateConfirmed,
     ocrFallbackRequired: ocrFallbackRequired ?? this.ocrFallbackRequired,
+    derivedFromPace: derivedFromPace ?? this.derivedFromPace,
   );
 }

@@ -2,6 +2,16 @@ import 'activity_import_models.dart';
 import 'activity_share_payload.dart';
 import 'activity_source_reference.dart';
 
+class _DurationParseResult {
+  const _DurationParseResult({
+    required this.seconds,
+    this.derivedFromPace = false,
+  });
+
+  final int? seconds;
+  final bool derivedFromPace;
+}
+
 class ActivityImportParser {
   const ActivityImportParser();
 
@@ -15,7 +25,12 @@ class ActivityImportParser {
     final source = _detectSource(payload.sourceHint, sharedText, sharedUrl);
     final distance = _parseDistance(sharedText);
     final detectedPace = _parsePace(sharedText);
-    final duration = _parseDuration(sharedText);
+    final duration = _parseDuration(
+      sharedText,
+      source: source,
+      distanceMeters: distance,
+      paceSecondsPerKm: detectedPace,
+    );
     final start = _parseStartDateTime(sharedText);
     final sourceReference = source == ActivityImportSource.strava
         ? extractStravaSourceReference(sharedUrl)
@@ -24,14 +39,15 @@ class ActivityImportParser {
       source: source,
       payload: payload.copyWith(sharedUrl: sharedUrl),
       distanceMeters: distance,
-      durationSeconds: duration,
+      durationSeconds: duration.seconds,
       detectedPaceSecondsPerKm: detectedPace,
       sourceRef: sourceReference?.ref,
       sourceUrl: sourceReference?.url ?? sharedUrl,
       startDateTime: start,
       ocrFallbackRequired:
-          (distance == null || duration == null || start == null) &&
+          (distance == null || duration.seconds == null || start == null) &&
           payload.images.isNotEmpty,
+      derivedFromPace: duration.derivedFromPace,
     );
   }
 
@@ -43,8 +59,14 @@ class ActivityImportParser {
     if (RegExp(r'\btotal\s*time\b', caseSensitive: false).hasMatch(text)) {
       return ActivityImportSource.garmin;
     }
+    if (_hasStravaMetricLabels(text)) return ActivityImportSource.strava;
     return _sourceIn(url ?? '');
   }
+
+  bool _hasStravaMetricLabels(String text) =>
+      RegExp(r'\bdistance\b', caseSensitive: false).hasMatch(text) &&
+      RegExp(r'\bpace\b', caseSensitive: false).hasMatch(text) &&
+      RegExp(r'\btime\b', caseSensitive: false).hasMatch(text);
 
   ActivityImportSource _sourceIn(String value) {
     final haystack = value.toLowerCase();
@@ -90,7 +112,98 @@ class ActivityImportParser {
     return parsed == null || !parsed.isFinite || parsed <= 0 ? null : parsed;
   }
 
-  int? _parseDuration(String text) {
+  _DurationParseResult _parseDuration(
+    String text, {
+    required ActivityImportSource source,
+    required double? distanceMeters,
+    required int? paceSecondsPerKm,
+  }) {
+    if (source == ActivityImportSource.strava) {
+      final labelled = _parseStravaTime(text);
+      if (labelled != null &&
+          _isConsistentStravaDuration(
+            labelled,
+            distanceMeters: distanceMeters,
+            paceSecondsPerKm: paceSecondsPerKm,
+          )) {
+        return _DurationParseResult(seconds: labelled);
+      }
+      if (!_hasTimeLabel(text)) {
+        final generic = _parseGenericDuration(text);
+        if (generic != null &&
+            _isConsistentStravaDuration(
+              generic,
+              distanceMeters: distanceMeters,
+              paceSecondsPerKm: paceSecondsPerKm,
+            )) {
+          return _DurationParseResult(seconds: generic);
+        }
+      }
+      final derived = _durationFromDistanceAndPace(
+        distanceMeters,
+        paceSecondsPerKm,
+      );
+      return _DurationParseResult(
+        seconds: derived,
+        derivedFromPace: derived != null,
+      );
+    }
+    return _DurationParseResult(seconds: _parseGenericDuration(text));
+  }
+
+  bool _hasTimeLabel(String text) => RegExp(
+    r'\b(?:moving\s*time|total\s*time|duration|time)\b',
+    caseSensitive: false,
+  ).hasMatch(text);
+
+  int? _parseStravaTime(String text) {
+    final labels = RegExp(
+      r'\b(?:moving\s*time|total\s*time|duration|time)\b',
+      caseSensitive: false,
+    ).allMatches(text);
+    for (final label in labels) {
+      final valueEnd = (label.end + 72).clamp(0, text.length);
+      var valueText = text.substring(label.end, valueEnd);
+      final nextMetric = RegExp(
+        r'\b(?:distance|pace|moving\s*time|total\s*time|duration|time)\b',
+        caseSensitive: false,
+      ).firstMatch(valueText);
+      if (nextMetric != null) {
+        valueText = valueText.substring(0, nextMetric.start);
+      }
+      final value = _durationIn(valueText, allowSingleMinute: true);
+      if (value != null) return value;
+    }
+    return null;
+  }
+
+  bool _isConsistentStravaDuration(
+    int duration, {
+    required double? distanceMeters,
+    required int? paceSecondsPerKm,
+  }) {
+    final expected = _durationFromDistanceAndPace(
+      distanceMeters,
+      paceSecondsPerKm,
+    );
+    return expected == null || (duration - expected).abs() <= 90;
+  }
+
+  int? _durationFromDistanceAndPace(
+    double? distanceMeters,
+    int? paceSecondsPerKm,
+  ) {
+    if (distanceMeters == null ||
+        !distanceMeters.isFinite ||
+        distanceMeters <= 0 ||
+        paceSecondsPerKm == null ||
+        paceSecondsPerKm <= 0) {
+      return null;
+    }
+    return ((distanceMeters / 1000) * paceSecondsPerKm).round();
+  }
+
+  int? _parseGenericDuration(String text) {
     final labels = RegExp(
       r'\b(total\s*time|moving\s*time|duration|time)\b',
       caseSensitive: false,
@@ -115,6 +228,10 @@ class ActivityImportParser {
   }
 
   int? _durationIn(String text, {required bool allowSingleMinute}) {
+    text = text.replaceAllMapped(
+      RegExp(r'(\d)\s*[lI]\s*(?=s\b)'),
+      (match) => '${match.group(1)}1',
+    );
     final hours = RegExp(
       r'(?<!\d)(\d+)\s*(?:h|hours?)\b(?:\s*(\d+)\s*(?:m|minutes?)\b)?(?:\s*(\d+)\s*(?:s|seconds?)\b)?',
       caseSensitive: false,
@@ -128,7 +245,7 @@ class ActivityImportParser {
     }
 
     final minutesSeconds = RegExp(
-      r'(?<!\d)(\d+)\s*(?:m|minutes?)\b\s*(\d+)\s*(?:s|seconds?)\b',
+      r'(?<!\d)(\d+)\s*(?:m|minutes?)\s*(\d+)\s*(?:s|seconds?)\b',
       caseSensitive: false,
     ).firstMatch(text);
     if (minutesSeconds != null) {

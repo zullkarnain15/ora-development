@@ -66,6 +66,11 @@ void main() {
     expect(ocr, contains('oraActualImageMimeType'));
     expect(ocr, contains("canvas.toDataURL('image/png')"));
     expect(ocr, contains("name: 'lower-stats-contrast'"));
+    expect(ocr, contains('isOraStravaCard'));
+    expect(ocr, contains('recognizeOraStravaVariants'));
+    expect(ocr, contains('oraTimeColumnCrop'));
+    expect(ocr, contains("name: 'strava-time-column'"));
+    expect(ocr, contains('worker.recognize(blob)'));
     expect(index, contains('src="ora_pwa_install.js"'));
     expect(install, contains("window.addEventListener('beforeinstallprompt'"));
     expect(install, contains("window.addEventListener('appinstalled'"));

@@ -53,20 +53,31 @@ async function decodeOraImage(blob) {
   }
 }
 
-function oraCanvasSize(width, height) {
+function oraCanvasSize(width, height, requestedScale = 2) {
   const longestSide = Math.max(width, height);
-  const scale = Math.min(2, ORA_OCR_MAX_SIDE / longestSide);
+  const scale = Math.min(requestedScale, ORA_OCR_MAX_SIDE / longestSide);
   return {
     width: Math.max(1, Math.round(width * scale)),
     height: Math.max(1, Math.round(height * scale)),
   };
 }
 
-function drawOraVariant(image, mode) {
+function oraCropRect(image, mode) {
+  if (mode.crop) {
+    const x = Math.max(0, Math.min(image.width - 1, Math.round(image.width * mode.crop.x)));
+    const y = Math.max(0, Math.min(image.height - 1, Math.round(image.height * mode.crop.y)));
+    const width = Math.max(1, Math.min(image.width - x, Math.round(image.width * mode.crop.width)));
+    const height = Math.max(1, Math.min(image.height - y, Math.round(image.height * mode.crop.height)));
+    return {x, y, width, height};
+  }
   const cropTop = Math.max(0, Math.min(0.8, mode.cropTop || 0));
-  const sourceY = Math.round(image.height * cropTop);
-  const sourceHeight = Math.max(1, image.height - sourceY);
-  const size = oraCanvasSize(image.width, sourceHeight);
+  const y = Math.round(image.height * cropTop);
+  return {x: 0, y, width: image.width, height: Math.max(1, image.height - y)};
+}
+
+function drawOraVariant(image, mode) {
+  const crop = oraCropRect(image, mode);
+  const size = oraCanvasSize(crop.width, crop.height, mode.scale || 2);
   const canvas = document.createElement('canvas');
   canvas.width = size.width;
   canvas.height = size.height;
@@ -79,10 +90,10 @@ function drawOraVariant(image, mode) {
   context.fillRect(0, 0, size.width, size.height);
   context.drawImage(
     image.source,
-    0,
-    sourceY,
-    image.width,
-    sourceHeight,
+    crop.x,
+    crop.y,
+    crop.width,
+    crop.height,
     0,
     0,
     size.width,
@@ -92,15 +103,28 @@ function drawOraVariant(image, mode) {
   if (mode.filter === 'normal') return canvas.toDataURL('image/png');
   const pixels = context.getImageData(0, 0, size.width, size.height);
   const data = pixels.data;
+  const luminance = new Float32Array(size.width * size.height);
   for (let index = 0; index < data.length; index += 4) {
-    const gray = data[index] * 0.299 + data[index + 1] * 0.587 + data[index + 2] * 0.114;
-    let value = Math.max(0, Math.min(255, (gray - 128) * mode.contrast + 128));
-    if (mode.threshold !== null) value = value >= mode.threshold ? 255 : 0;
-    if (mode.invert) value = 255 - value;
-    data[index] = value;
-    data[index + 1] = value;
-    data[index + 2] = value;
-    data[index + 3] = 255;
+    luminance[index / 4] = data[index] * 0.299 + data[index + 1] * 0.587 + data[index + 2] * 0.114;
+  }
+  for (let y = 0; y < size.height; y += 1) {
+    for (let x = 0; x < size.width; x += 1) {
+      const pixelIndex = y * size.width + x;
+      let gray = luminance[pixelIndex];
+      if (mode.sharpen && x > 0 && y > 0 && x + 1 < size.width && y + 1 < size.height) {
+        const neighbors = luminance[pixelIndex - 1] + luminance[pixelIndex + 1] +
+          luminance[pixelIndex - size.width] + luminance[pixelIndex + size.width];
+        gray += (gray - neighbors / 4) * mode.sharpen;
+      }
+      let value = Math.max(0, Math.min(255, (gray - 128) * mode.contrast + 128));
+      if (mode.threshold !== null) value = value >= mode.threshold ? 255 : 0;
+      if (mode.invert) value = 255 - value;
+      const index = pixelIndex * 4;
+      data[index] = value;
+      data[index + 1] = value;
+      data[index + 2] = value;
+      data[index + 3] = 255;
+    }
   }
   context.putImageData(pixels, 0, 0);
   return canvas.toDataURL('image/png');
@@ -134,6 +158,10 @@ function scoreOraActivityText(value) {
 }
 
 function oraDurationSeconds(text) {
+  text = String(text || '').replace(
+    /(\d)\s*[lI]\s*(?=s\b)/g,
+    (_, digit) => `${digit}1`,
+  );
   const hoursMinutesSeconds = text.match(
     /\b(\d+)\s*(?:h|hours?)\s*(\d+)\s*(?:m|minutes?)\s*(\d+)\s*(?:s|seconds?)\b/i,
   );
@@ -158,7 +186,34 @@ function oraDurationSeconds(text) {
   return null;
 }
 
-async function recognizeOraVariants(worker, image) {
+function oraTextFromResult(result) {
+  return result && result.data && result.data.text ? String(result.data.text) : '';
+}
+
+function isOraStravaCard(text) {
+  const value = String(text || '');
+  return /\bstrava\b/i.test(value) ||
+    (/\bdistance\b/i.test(value) && /\bpace\b/i.test(value) && /\btime\b/i.test(value));
+}
+
+function oraTimeColumnCrop(result, image) {
+  const words = result && result.data && Array.isArray(result.data.words) ? result.data.words : [];
+  const timeWord = words.find((word) => /^time$/i.test(String(word.text || '').replace(/[^a-z]/gi, '')));
+  const box = timeWord && timeWord.bbox;
+  if (!box || !Number.isFinite(box.x0) || !Number.isFinite(box.y0)) return null;
+  const labelX = box.x0;
+  const labelY = box.y0;
+  const x = Math.max(0, Math.min(image.width - 1, labelX - image.width * 0.12));
+  const y = Math.max(0, Math.min(image.height - 1, labelY - image.height * 0.04));
+  return {
+    x: x / image.width,
+    y: y / image.height,
+    width: Math.min(image.width - x, image.width * 0.45) / image.width,
+    height: Math.min(image.height - y, image.height * 0.25) / image.height,
+  };
+}
+
+async function recognizeOraGenericVariants(worker, image) {
   const variants = [
     {name: 'normalized-white', background: '#ffffff', filter: 'normal', contrast: 1, threshold: null, invert: false, cropTop: 0},
     {name: 'grayscale-contrast', background: '#ffffff', filter: 'grayscale', contrast: 2.2, threshold: null, invert: false, cropTop: 0},
@@ -182,6 +237,38 @@ async function recognizeOraVariants(worker, image) {
       best = text;
       bestScore = score;
     }
+  }
+  return best;
+}
+
+async function recognizeOraStravaVariants(worker, image, originalResult) {
+  const variants = [
+    // The original PNG is recognized directly before these canvas passes.
+    {name: 'strava-grayscale-upscale-2x', background: '#000000', filter: 'grayscale', contrast: 2.25, threshold: null, invert: false, cropTop: 0, scale: 2, sharpen: 1.05},
+    {name: 'strava-grayscale-upscale-3x', background: '#000000', filter: 'grayscale', contrast: 2.35, threshold: null, invert: false, cropTop: 0, scale: 3, sharpen: 1.15},
+    {name: 'strava-white-text-threshold', background: '#000000', filter: 'grayscale', contrast: 2.6, threshold: 168, invert: false, cropTop: 0, scale: 3, sharpen: 1.2},
+    {name: 'strava-metrics-center-bottom', background: '#000000', filter: 'grayscale', contrast: 2.45, threshold: 158, invert: false, crop: {x: 0.12, y: 0.48, width: 0.76, height: 0.34}, scale: 3, sharpen: 1.1},
+  ];
+  let best = oraTextFromResult(originalResult);
+  let bestScore = scoreOraActivityText(best);
+  for (const variant of variants) {
+    const result = await worker.recognize(drawOraVariant(image, variant));
+    const text = oraTextFromResult(result);
+    const score = scoreOraActivityText(text);
+    if (score > bestScore || (score === bestScore && text.length > best.length)) {
+      best = text;
+      bestScore = score;
+    }
+  }
+
+  const timeCrop = oraTimeColumnCrop(originalResult, image);
+  if (timeCrop) {
+    const result = await worker.recognize(drawOraVariant(image, {
+      name: 'strava-time-column', background: '#000000', filter: 'grayscale', contrast: 2.7,
+      threshold: 165, invert: false, crop: timeCrop, scale: 3, sharpen: 1.25,
+    }));
+    const timeText = oraTextFromResult(result).trim();
+    if (timeText) best = `${best}\nTime\n${timeText}`;
   }
   return best;
 }
@@ -219,7 +306,20 @@ self.oraRecognizeActivityImage = async function(bytes, mimeType) {
   let worker = null;
   try {
     worker = await Tesseract.createWorker('eng');
-    return (await recognizeOraVariants(worker, image)).trim();
+    // Keep a PNG as PNG for the first pass. This preserves white text and
+    // transparent Strava overlays before any canvas preprocessing happens.
+    let originalResult = null;
+    try {
+      originalResult = await worker.recognize(blob);
+    } catch (_) {
+      // Formats that the browser can draw but Tesseract cannot read directly
+      // retain the existing generic canvas pipeline.
+      return (await recognizeOraGenericVariants(worker, image)).trim();
+    }
+    const text = isOraStravaCard(oraTextFromResult(originalResult))
+      ? await recognizeOraStravaVariants(worker, image, originalResult)
+      : await recognizeOraGenericVariants(worker, image);
+    return text.trim();
   } finally {
     image.dispose();
     if (worker) await worker.terminate();

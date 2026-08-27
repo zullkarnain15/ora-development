@@ -3,7 +3,6 @@ import 'package:flutter/material.dart';
 import '../../../core/theme/ora_theme.dart';
 import '../../../shared/widgets/ora_widgets.dart';
 import '../application/activity_import_controller.dart';
-import '../domain/activity_import_models.dart';
 import '../domain/activity_share_payload.dart';
 
 class ActivityImportScreen extends StatefulWidget {
@@ -114,6 +113,13 @@ class _ActivityImportScreenState extends State<ActivityImportScreen> {
                 label: 'DURATION',
                 value: _durationText(draft.durationSeconds),
               ),
+              if (draft.derivedFromPace) ...[
+                const SizedBox(height: 8),
+                const OraStatLine(
+                  label: 'DURATION SOURCE',
+                  value: 'ESTIMATED FROM PACE',
+                ),
+              ],
               const SizedBox(height: 12),
               OraStatLine(
                 key: const Key('import_pace'),
@@ -128,31 +134,17 @@ class _ActivityImportScreenState extends State<ActivityImportScreen> {
                 ),
               ],
               const SizedBox(height: 18),
-              Row(
-                children: [
-                  Expanded(
-                    child: OutlinedButton.icon(
-                      key: const Key('import_date'),
-                      onPressed: saved ? null : () => _pickDate(draft),
-                      icon: const Icon(Icons.calendar_today_outlined),
-                      label: Text(_dateText(controller.selectedDate)),
-                    ),
-                  ),
-                  const SizedBox(width: 10),
-                  Expanded(
-                    child: OutlinedButton.icon(
-                      key: const Key('import_time'),
-                      onPressed: saved ? null : () => _pickTime(draft),
-                      icon: const Icon(Icons.schedule),
-                      label: Text(
-                        _timeText(
-                          controller.selectedHour,
-                          controller.selectedMinute,
-                        ),
-                      ),
-                    ),
-                  ),
-                ],
+              OraStatLine(
+                label: 'ACTIVITY DATE',
+                value: _dateText(controller.selectedDate),
+              ),
+              const SizedBox(height: 12),
+              OraStatLine(
+                label: 'START TIME',
+                value: _timeText(
+                  controller.selectedHour,
+                  controller.selectedMinute,
+                ),
               ),
               if (draft.sourceRef case final sourceRef?) ...[
                 const SizedBox(height: 12),
@@ -204,30 +196,6 @@ class _ActivityImportScreenState extends State<ActivityImportScreen> {
           ),
       ],
     );
-  }
-
-  Future<void> _pickDate(ActivityImportDraft draft) async {
-    final now = DateTime.now();
-    final selected = await showDatePicker(
-      context: context,
-      firstDate: DateTime(now.year - 10),
-      lastDate: now,
-      initialDate: controller.selectedDate ?? draft.startDateTime ?? now,
-    );
-    if (selected != null) controller.updateDate(selected);
-  }
-
-  Future<void> _pickTime(ActivityImportDraft draft) async {
-    final currentHour = controller.selectedHour ?? draft.startDateTime?.hour;
-    final currentMinute =
-        controller.selectedMinute ?? draft.startDateTime?.minute;
-    final selected = await showTimePicker(
-      context: context,
-      initialTime: currentHour == null || currentMinute == null
-          ? TimeOfDay.now()
-          : TimeOfDay(hour: currentHour, minute: currentMinute),
-    );
-    if (selected != null) controller.updateTime(selected.hour, selected.minute);
   }
 
   Future<void> _save() async {

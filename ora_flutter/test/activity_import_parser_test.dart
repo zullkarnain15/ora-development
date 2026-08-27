@@ -60,6 +60,54 @@ Distance
     }
   });
 
+  test('parses the black Strava share card Time value next to its label', () {
+    final result = parser.parse(
+      payload('''
+STRAVA
+Distance        Pace          Time
+4.26 km         6:27 /km      27m 31s
+'''),
+    );
+
+    expect(result.source, ActivityImportSource.strava);
+    expect(result.distanceMeters, 4260);
+    expect(result.detectedPaceSecondsPerKm, 387);
+    expect(result.durationSeconds, 1651);
+    expect(result.derivedFromPace, isFalse);
+  });
+
+  test(
+    'derives a Strava duration from valid distance and pace when Time fails',
+    () {
+      final result = parser.parse(
+        payload('STRAVA\nDistance 4.26 km\nPace 6:27 /km'),
+      );
+
+      expect(result.distanceMeters, 4260);
+      expect(result.detectedPaceSecondsPerKm, 387);
+      expect(result.durationSeconds, 1649);
+      expect(result.derivedFromPace, isTrue);
+    },
+  );
+
+  test('profiles an unbranded Distance Pace Time card as Strava', () {
+    final result = parser.parse(
+      payload('Distance 4.26 km\nPace 6:27 /km\nTime 27m 31s'),
+    );
+
+    expect(result.source, ActivityImportSource.strava);
+    expect(result.durationSeconds, 1651);
+  });
+
+  test('normalizes a common Strava Time OCR error in the seconds value', () {
+    final result = parser.parse(
+      payload('STRAVA\nDistance 4.26 km\nPace 6:27 /km\nTime 27m 3ls'),
+    );
+
+    expect(result.durationSeconds, 1651);
+    expect(result.derivedFromPace, isFalse);
+  });
+
   test(
     'does not invent duration from distance and pace when Time is missing',
     () {
