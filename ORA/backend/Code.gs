@@ -31,6 +31,8 @@ const ORA_IMPORT_MAX_IMAGE_BYTES = 2 * 1024 * 1024;
 const ORA_IMPORT_MAX_TEXT_LENGTH = 20000;
 const ORA_IMPORT_MAX_ACTIVE = 100;
 const ORA_IMPORT_WEB_URL = 'https://zullkarnain15.github.io/ora-development/?t=';
+const ORA_STRAVA_SYNC_SECRET_PROPERTY = 'ORA_STRAVA_SYNC_SECRET';
+const ORA_STRAVA_SYNC_LOCK_TIMEOUT_MS = 30000;
 
 const ORA_CONFIG_DEFINITIONS = Object.freeze({
   MIN_DISTANCE_VALID_RUN_KM: Object.freeze({
@@ -54,6 +56,7 @@ const ORA_SHEETS = Object.freeze({
   ATTENDANCE_RECORDS: 'Attendance_Records',
   ATTENDANCE_REWARDS: 'Attendance_Reward_Master',
   SHORTCUT_ICLOUD: 'Shortcut_Icloud',
+  STRAVA_ATHLETE_MAP: 'Strava_Athlete_Map',
 });
 
 const ORA_HEADERS = Object.freeze({
@@ -167,6 +170,7 @@ const ORA_HEADERS = Object.freeze({
   ],
   Attendance_Reward_Master: ['RewardType', 'Milestone', 'XP', 'Status'],
   Shortcut_Icloud: ['LINK_ICLOUD'],
+  Strava_Athlete_Map: ['AthleteId', 'AthleteName', 'NIK', 'Nickname', 'Guild'],
 });
 
 /**
@@ -236,6 +240,7 @@ function normalizeIphoneShortcutLink_(value) {
  * {"action":"getQuestProgress","sessionToken":"..."}
  * {"action":"claimQuestReward","sessionToken":"...","questId":"DEV-Q001"}
  * {"action":"submitAttendance","sessionToken":"...","qrToken":"..."}
+ * {"action":"syncStravaActivities","source":"ORA_StravaSync","secret":"...","activities":[]}
  */
 function doPost(e) {
   try {
@@ -274,6 +279,8 @@ function doPost(e) {
       case 'submitattendance':
       case 'checkinattendance':
         return handleSubmitAttendance_(request);
+      case 'syncstravaactivities':
+        return handleSyncStravaActivities_(request);
       case 'config':
         return jsonSuccess_({ config: getActiveConfig_() });
       case 'levels':
@@ -291,6 +298,526 @@ function doPost(e) {
     console.error('ORA doPost failed: %s', safeErrorMessage_(error));
     return jsonError_('INTERNAL_ERROR', 'Terjadi kesalahan pada server ORA.');
   }
+}
+
+function handleSyncStravaActivities_(request) {
+  validateStravaSyncSecret_(request.secret);
+  const activities = Array.isArray(request.activities) ? request.activities : [];
+  const lock = LockService.getScriptLock();
+  lock.waitLock(ORA_STRAVA_SYNC_LOCK_TIMEOUT_MS);
+
+  try {
+    const sheet = getActivitiesSheet_();
+    const athleteMapSheet = getValidatedSheet_(ORA_SHEETS.STRAVA_ATHLETE_MAP);
+    const observedAthletes = upsertObservedStravaAthletes_(athleteMapSheet, activities);
+    const athleteNikMap = loadStravaAthleteNikMap_();
+    const participants = loadActiveParticipantsByNik_();
+    refreshObservedStravaAthleteMap_(
+      athleteMapSheet,
+      observedAthletes,
+      athleteNikMap,
+      participants
+    );
+    const existingActivities = loadExistingStravaActivities_(sheet);
+    const now = new Date();
+    const rowsToAppend = [];
+    const remaps = [];
+    const statsEvents = [];
+    const statuses = [];
+    const seenInRequest = {};
+    const summary = { NEW: 0, DUPLICATE: 0, UNMAPPED: 0, INVALID: 0 };
+
+    activities.forEach(function (rawActivity) {
+      const normalized = normalizeStravaSyncActivity_(rawActivity);
+      if (normalized.error) {
+        statuses.push(stravaSyncStatus_(rawActivity, 'INVALID', normalized.error));
+        summary.INVALID += 1;
+        return;
+      }
+
+      const activity = normalized.activity;
+      if (seenInRequest[activity.activityId]) {
+        statuses.push(stravaSyncStatus_(activity, 'DUPLICATE', 'activityId duplicated in request'));
+        summary.DUPLICATE += 1;
+        return;
+      }
+      seenInRequest[activity.activityId] = true;
+
+      const mappedNik = athleteNikMap[activity.athleteId] || '';
+      const participant = mappedNik ? participants[mappedNik] || null : null;
+      const existing = existingActivities[activity.activityId] || null;
+
+      if (existing) {
+        if (existing.status === 'UNMAPPED') {
+          if (participant) {
+            remaps.push({ existing: existing, activity: activity, participant: participant });
+            statsEvents.push({ activity: activity, participant: participant });
+            statuses.push(stravaSyncStatus_(activity, 'NEW', 'existing UNMAPPED row mapped to participant'));
+            summary.NEW += 1;
+          } else {
+            statuses.push(stravaSyncStatus_(activity, 'UNMAPPED', stravaUnmappedReason_(mappedNik)));
+            summary.UNMAPPED += 1;
+          }
+        } else {
+          statuses.push(stravaSyncStatus_(activity, 'DUPLICATE', 'Strava activity already exists'));
+          summary.DUPLICATE += 1;
+        }
+        return;
+      }
+
+      const status = participant ? 'NEW' : 'UNMAPPED';
+      rowsToAppend.push(buildOraStravaActivityRow_(activity, participant, now));
+      if (participant) statsEvents.push({ activity: activity, participant: participant });
+      statuses.push(stravaSyncStatus_(activity, status, participant ? '' : stravaUnmappedReason_(mappedNik)));
+      summary[status] += 1;
+    });
+
+    const statsSnapshots = captureStravaUserStatsSnapshots_(statsEvents);
+    const remapSnapshots = [];
+    let appendStartRow = null;
+    let appendedRowsWritten = false;
+
+    try {
+      remaps.forEach(function (remap) {
+        const rowNumber = remap.existing.rowNumber;
+        const previousValues = sheet
+          .getRange(rowNumber, 1, 1, ORA_HEADERS.Activities.length)
+          .getValues()[0];
+        remapSnapshots.push({ rowNumber: rowNumber, previousValues: previousValues });
+        const updatedRow = buildOraStravaActivityRow_(remap.activity, remap.participant, now);
+        if (previousValues[13]) updatedRow[13] = previousValues[13];
+        sheet.getRange(rowNumber, 1, 1, 2).setNumberFormat('@');
+        sheet.getRange(rowNumber, 1, 1, ORA_HEADERS.Activities.length).setValues([updatedRow]);
+      });
+
+      if (rowsToAppend.length > 0) {
+        appendStartRow = sheet.getLastRow() + 1;
+        ensureOraSheetRowCapacity_(sheet, appendStartRow + rowsToAppend.length - 1);
+        sheet.getRange(appendStartRow, 1, rowsToAppend.length, 2).setNumberFormat('@');
+        sheet
+          .getRange(appendStartRow, 1, rowsToAppend.length, ORA_HEADERS.Activities.length)
+          .setValues(rowsToAppend);
+        appendedRowsWritten = true;
+      }
+
+      statsEvents
+        .slice()
+        .sort(compareStravaStatsEvents_)
+        .forEach(function (event) {
+          const activity = event.activity;
+          const durationSec = stravaActivityDurationSeconds_(activity);
+          const distanceKm = activity.distanceKm == null ? 0 : activity.distanceKm;
+          upsertUserStats_({
+            nik: event.participant.nik,
+            nickname: event.participant.nickname,
+            division: event.participant.divisionGuild,
+            activityId: 'STRAVA-' + activity.activityId,
+            activityAt: activity.startDateUtc || activity.activityDateLocal,
+            durationSec: durationSec,
+            distanceKm: distanceKm,
+            activityXp: calculateActivityXp_(distanceKm, 'COMPLETED'),
+          });
+        });
+    } catch (error) {
+      rollbackStravaUserStats_(statsSnapshots);
+      if (appendedRowsWritten) {
+        sheet.deleteRows(appendStartRow, rowsToAppend.length);
+      }
+      remapSnapshots.forEach(function (snapshot) {
+        sheet
+          .getRange(snapshot.rowNumber, 1, 1, ORA_HEADERS.Activities.length)
+          .setValues([snapshot.previousValues]);
+      });
+      throw error;
+    }
+
+    return jsonStravaSyncSuccess_({
+      received: activities.length,
+      inserted: rowsToAppend.length,
+      updated: remaps.length,
+      summary: summary,
+      statuses: statuses,
+    });
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+function validateStravaSyncSecret_(secret) {
+  const expected = PropertiesService
+    .getScriptProperties()
+    .getProperty(ORA_STRAVA_SYNC_SECRET_PROPERTY);
+  if (!expected) {
+    throw oraError_(
+      'STRAVA_SYNC_NOT_CONFIGURED',
+      'Script Property ORA_STRAVA_SYNC_SECRET belum dikonfigurasi.'
+    );
+  }
+  if (String(secret || '') !== expected) {
+    throw oraError_('UNAUTHORIZED', 'Secret Strava sync tidak valid.');
+  }
+}
+
+function collectObservedStravaAthletes_(activities) {
+  const observed = {};
+  (activities || []).forEach(function (rawActivity) {
+    const normalized = normalizeStravaSyncActivity_(rawActivity);
+    if (normalized.error) return;
+    const activity = normalized.activity;
+    observed[activity.athleteId] = {
+      athleteId: activity.athleteId,
+      athleteName: activity.athleteName,
+    };
+  });
+  return observed;
+}
+
+function ensureStravaAthleteMapNotesColumn_(sheet) {
+  const lastColumn = Math.max(sheet.getLastColumn(), 1);
+  const headers = sheet.getRange(1, 1, 1, lastColumn).getDisplayValues()[0];
+  const headerMap = createCaseInsensitiveHeaderMap_(headers);
+  const existingColumn = headerMap.notes == null ? headerMap.note : headerMap.notes;
+  if (existingColumn != null) return existingColumn;
+
+  const notesColumn = lastColumn;
+  if (sheet.getMaxColumns() < lastColumn + 1) {
+    sheet.insertColumnsAfter(sheet.getMaxColumns(), lastColumn + 1 - sheet.getMaxColumns());
+  }
+  sheet.getRange(1, notesColumn + 1, 1, 1).setValues([['Notes']]);
+  return notesColumn;
+}
+
+function upsertObservedStravaAthletes_(sheet, activities) {
+  const observed = collectObservedStravaAthletes_(activities);
+  const observedIds = Object.keys(observed);
+  if (observedIds.length === 0) return observed;
+
+  const notesColumn = ensureStravaAthleteMapNotesColumn_(sheet);
+  const lastColumn = Math.max(sheet.getLastColumn(), notesColumn + 1);
+  const values = sheet.getRange(1, 1, Math.max(sheet.getLastRow(), 1), lastColumn)
+    .getDisplayValues();
+  const headers = createCaseInsensitiveHeaderMap_(values[0]);
+  const existingIds = {};
+  values.slice(1).forEach(function (row) {
+    const athleteId = String(row[headers.athleteid] || '').trim();
+    if (athleteId) existingIds[athleteId] = true;
+  });
+
+  const rowsToAppend = observedIds.filter(function (athleteId) {
+    return !existingIds[athleteId];
+  }).map(function (athleteId) {
+    const row = new Array(lastColumn).fill('');
+    row[headers.athleteid] = athleteId;
+    row[headers.athletename] = observed[athleteId].athleteName;
+    row[notesColumn] = 'UNMAPPED';
+    return row;
+  });
+
+  if (rowsToAppend.length > 0) {
+    const startRow = sheet.getLastRow() + 1;
+    ensureOraSheetRowCapacity_(sheet, startRow + rowsToAppend.length - 1);
+    sheet.getRange(startRow, headers.athleteid + 1, rowsToAppend.length, 1)
+      .setNumberFormat('@');
+    sheet.getRange(startRow, headers.nik + 1, rowsToAppend.length, 1)
+      .setNumberFormat('@');
+    sheet.getRange(startRow, 1, rowsToAppend.length, lastColumn).setValues(rowsToAppend);
+  }
+  return observed;
+}
+
+function refreshObservedStravaAthleteMap_(sheet, observed, athleteNikMap, participants) {
+  const observedIds = Object.keys(observed || {});
+  if (observedIds.length === 0 || sheet.getLastRow() < 2) return;
+
+  const notesColumn = ensureStravaAthleteMapNotesColumn_(sheet);
+  const lastColumn = Math.max(sheet.getLastColumn(), notesColumn + 1);
+  const values = sheet.getRange(1, 1, sheet.getLastRow(), lastColumn).getDisplayValues();
+  const headers = createCaseInsensitiveHeaderMap_(values[0]);
+  const names = values.slice(1).map(function (row) {
+    return [row[headers.athletename]];
+  });
+  const notes = values.slice(1).map(function (row) {
+    return [row[notesColumn]];
+  });
+  let namesChanged = false;
+  let notesChanged = false;
+
+  values.slice(1).forEach(function (row, index) {
+    const athleteId = String(row[headers.athleteid] || '').trim();
+    if (!observed[athleteId]) return;
+    const athleteName = observed[athleteId].athleteName;
+    const note = stravaAthleteMapNote_(athleteId, athleteNikMap, participants);
+    if (names[index][0] !== athleteName) {
+      names[index][0] = athleteName;
+      namesChanged = true;
+    }
+    if (notes[index][0] !== note) {
+      notes[index][0] = note;
+      notesChanged = true;
+    }
+  });
+
+  if (namesChanged) {
+    sheet.getRange(2, headers.athletename + 1, names.length, 1).setValues(names);
+  }
+  if (notesChanged) {
+    sheet.getRange(2, notesColumn + 1, notes.length, 1).setValues(notes);
+  }
+}
+
+function stravaAthleteMapNote_(athleteId, athleteNikMap, participants) {
+  const mappedNik = athleteNikMap[athleteId] || '';
+  return mappedNik && participants[mappedNik] ? 'MAPPED' : 'UNMAPPED';
+}
+
+function loadStravaAthleteNikMap_() {
+  const sheet = getValidatedSheet_(ORA_SHEETS.STRAVA_ATHLETE_MAP);
+  const values = sheet.getDataRange().getDisplayValues();
+  if (values.length < 2) return {};
+  const headers = createCaseInsensitiveHeaderMap_(values[0]);
+  const athleteIdColumn = headers.athleteid;
+  const nikColumn = headers.nik;
+  const activeColumn = headers.active;
+  const result = {};
+
+  values.slice(1).forEach(function (row) {
+    const athleteId = String(row[athleteIdColumn] || '').trim();
+    const nik = normalizeDigits_(row[nikColumn]);
+    const active = activeColumn == null || isOptionalActiveValue_(row[activeColumn]);
+    if (!athleteId || !nik || !active) return;
+    if (result[athleteId] && result[athleteId] !== nik) {
+      throw oraError_(
+        'INVALID_STRAVA_ATHLETE_MAP',
+        'AthleteId ' + athleteId + ' memiliki lebih dari satu NIK.'
+      );
+    }
+    result[athleteId] = nik;
+  });
+  return result;
+}
+
+function loadActiveParticipantsByNik_() {
+  const rows = readSheetObjects_(ORA_SHEETS.PARTICIPANTS);
+  const result = {};
+  rows.forEach(function (row) {
+    const nik = normalizeDigits_(row.NIK);
+    if (!nik || String(row.Status || '').trim().toUpperCase() !== 'ACTIVE') return;
+    result[nik] = {
+      nik: nik,
+      nickname: String(row.Nickname || '').trim(),
+      divisionGuild: String(row.Division_Guild || '').trim(),
+    };
+  });
+  return result;
+}
+
+function loadExistingStravaActivities_(sheet) {
+  const values = sheet.getDataRange().getDisplayValues();
+  if (values.length < 2) return {};
+  const headerMap = createHeaderMap_(values[0]);
+  const result = {};
+  values.slice(1).forEach(function (row, index) {
+    if (normalizeImportActivitySource_(row[headerMap.Source]) !== 'STRAVA') return;
+    const sourceRef = String(row[headerMap.SourceRef] || '').trim();
+    if (!sourceRef) return;
+    result[sourceRef] = {
+      rowNumber: index + 2,
+      status: String(row[headerMap.Status] || '').trim().toUpperCase(),
+      nik: normalizeDigits_(row[headerMap.NIK]),
+    };
+  });
+  return result;
+}
+
+function normalizeStravaSyncActivity_(rawActivity) {
+  if (!rawActivity || typeof rawActivity !== 'object' || Array.isArray(rawActivity)) {
+    return { error: 'activity must be an object' };
+  }
+  const activityId = String(rawActivity.activityId || '').trim();
+  const athleteId = String(rawActivity.athleteId || '').trim();
+  const activityDateLocal = String(rawActivity.activityDateLocal || '').trim();
+  if (!/^\d+$/.test(activityId)) return { error: 'invalid activityId' };
+  if (!/^\d+$/.test(athleteId)) return { error: 'invalid athleteId' };
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(activityDateLocal)) {
+    return { error: 'invalid activityDateLocal' };
+  }
+
+  const numberFields = [
+    'distanceKm',
+    'movingTimeSeconds',
+    'elapsedTimeSeconds',
+    'paceSecondsPerKm',
+    'elevationGainMeters',
+  ];
+  const numbers = {};
+  for (let index = 0; index < numberFields.length; index += 1) {
+    const field = numberFields[index];
+    const value = rawActivity[field];
+    if (value === null || value === undefined || value === '') {
+      numbers[field] = null;
+      continue;
+    }
+    const number = Number(value);
+    if (!Number.isFinite(number) || number < 0) return { error: 'invalid ' + field };
+    numbers[field] = number;
+  }
+
+  const startDateUtc = String(rawActivity.startDateUtc || '').trim();
+  if (startDateUtc && isNaN(new Date(startDateUtc).getTime())) {
+    return { error: 'invalid startDateUtc' };
+  }
+  return {
+    activity: {
+      athleteName: String(rawActivity.athleteName || '').trim(),
+      athleteId: athleteId,
+      activityId: activityId,
+      activityDateLocal: activityDateLocal,
+      startDateUtc: startDateUtc,
+      distanceKm: numbers.distanceKm,
+      movingTimeSeconds: numbers.movingTimeSeconds,
+      elapsedTimeSeconds: numbers.elapsedTimeSeconds,
+      paceSecondsPerKm: numbers.paceSecondsPerKm,
+      elevationGainMeters: numbers.elevationGainMeters,
+      sportType: String(rawActivity.sportType || '').trim(),
+      activityTitle: String(rawActivity.activityTitle || '').trim(),
+    },
+  };
+}
+
+function buildOraStravaActivityRow_(activity, participant, now) {
+  const startTime = activity.startDateUtc || activity.activityDateLocal;
+  return [
+    'STRAVA-' + activity.activityId,
+    participant ? participant.nik : '',
+    participant ? participant.nickname : activity.athleteName,
+    participant ? participant.divisionGuild : '',
+    startTime,
+    stravaActivityEndTime_(activity),
+    stravaActivityDurationSeconds_(activity),
+    activity.distanceKm == null ? 0 : activity.distanceKm,
+    formatStravaPace_(activity.paceSecondsPerKm),
+    participant ? 'COMPLETED' : 'UNMAPPED',
+    'STRAVA',
+    '',
+    now,
+    now,
+    now,
+    activity.activityId,
+    'https://www.strava.com/activities/' + activity.activityId,
+  ];
+}
+
+function stravaActivityDurationSeconds_(activity) {
+  if (activity.movingTimeSeconds != null) return activity.movingTimeSeconds;
+  if (activity.elapsedTimeSeconds != null) return activity.elapsedTimeSeconds;
+  return 0;
+}
+
+function stravaActivityEndTime_(activity) {
+  if (!activity.startDateUtc || activity.elapsedTimeSeconds == null) return '';
+  const start = new Date(activity.startDateUtc);
+  if (isNaN(start.getTime())) return '';
+  return new Date(start.getTime() + activity.elapsedTimeSeconds * 1000).toISOString();
+}
+
+function formatStravaPace_(paceSecondsPerKm) {
+  if (paceSecondsPerKm == null) return '';
+  const totalSeconds = Math.round(Number(paceSecondsPerKm));
+  if (!Number.isFinite(totalSeconds) || totalSeconds < 0) return '';
+  const minutes = Math.floor(totalSeconds / 60);
+  const seconds = totalSeconds % 60;
+  return String(minutes).padStart(2, '0') + ':' + String(seconds).padStart(2, '0');
+}
+
+function createCaseInsensitiveHeaderMap_(headers) {
+  const map = {};
+  headers.forEach(function (header, index) {
+    map[String(header || '').trim().toLowerCase()] = index;
+  });
+  return map;
+}
+
+function isOptionalActiveValue_(value) {
+  const normalized = String(value == null ? '' : value).trim().toUpperCase();
+  return ['', 'TRUE', 'ACTIVE', 'YES', '1'].indexOf(normalized) >= 0;
+}
+
+function stravaUnmappedReason_(mappedNik) {
+  return mappedNik
+    ? 'Mapped NIK is missing or inactive in Participants'
+    : 'athleteId is not mapped to NIK';
+}
+
+function stravaSyncStatus_(activity, status, reason) {
+  return {
+    activityId: activity && activity.activityId ? String(activity.activityId) : '',
+    athleteId: activity && activity.athleteId ? String(activity.athleteId) : '',
+    status: status,
+    reason: reason || '',
+  };
+}
+
+function compareStravaStatsEvents_(left, right) {
+  const leftKey = left.activity.startDateUtc || left.activity.activityDateLocal || '';
+  const rightKey = right.activity.startDateUtc || right.activity.activityDateLocal || '';
+  if (leftKey < rightKey) return -1;
+  if (leftKey > rightKey) return 1;
+  return left.activity.activityId.localeCompare(right.activity.activityId);
+}
+
+function captureStravaUserStatsSnapshots_(statsEvents) {
+  const sheet = ensureUserStatsSheet_();
+  const snapshots = [];
+  const seen = {};
+  statsEvents.forEach(function (event) {
+    const nik = event.participant.nik;
+    if (seen[nik]) return;
+    seen[nik] = true;
+    const existing = findUserStatsRow_(sheet, nik);
+    snapshots.push({
+      nik: nik,
+      rowNumber: existing ? existing.rowNumber : null,
+      previousValues: existing
+        ? sheet.getRange(existing.rowNumber, 1, 1, ORA_HEADERS.User_Stats.length).getValues()[0]
+        : null,
+    });
+  });
+  return { sheet: sheet, snapshots: snapshots };
+}
+
+function rollbackStravaUserStats_(snapshotSet) {
+  try {
+    const newRows = [];
+    snapshotSet.snapshots.forEach(function (snapshot) {
+      if (snapshot.previousValues) {
+        snapshotSet.sheet
+          .getRange(snapshot.rowNumber, 1, 1, ORA_HEADERS.User_Stats.length)
+          .setValues([snapshot.previousValues]);
+      } else {
+        const current = findUserStatsRow_(snapshotSet.sheet, snapshot.nik);
+        if (current) newRows.push(current.rowNumber);
+      }
+    });
+    newRows.sort(function (left, right) { return right - left; }).forEach(function (rowNumber) {
+      snapshotSet.sheet.deleteRow(rowNumber);
+    });
+  } catch (rollbackError) {
+    console.error('Strava User_Stats rollback failed: %s', safeErrorMessage_(rollbackError));
+  }
+}
+
+function ensureOraSheetRowCapacity_(sheet, requiredRows) {
+  const missingRows = requiredRows - sheet.getMaxRows();
+  if (missingRows > 0) sheet.insertRowsAfter(sheet.getMaxRows(), missingRows);
+}
+
+function jsonStravaSyncSuccess_(result) {
+  return jsonOutput_({
+    ok: true,
+    apiVersion: ORA_API_VERSION,
+    timestamp: new Date().toISOString(),
+    result: result,
+  });
 }
 
 function handleCreateImportToken_(request) {
@@ -1445,7 +1972,38 @@ function onOpen() {
     .createMenu('ORA Attendance')
     .addItem('Generate QR Token', 'generateAttendanceQrTokenForSelectedEvent')
     .addItem('Regenerate QR Token', 'regenerateAttendanceQrTokenForSelectedEvent')
+    .addSeparator()
+    .addItem('Set/Replace Strava Sync Secret', 'promptSetOraStravaSyncSecret')
     .addToUi();
+}
+
+function promptSetOraStravaSyncSecret() {
+  const ui = SpreadsheetApp.getUi();
+  const properties = PropertiesService.getScriptProperties();
+  const replacing = !!properties.getProperty(ORA_STRAVA_SYNC_SECRET_PROPERTY);
+  const response = ui.prompt(
+    replacing ? 'Replace Strava Sync Secret' : 'Set Strava Sync Secret',
+    'Masukkan secret acak minimal 32 karakter. Nilai tidak akan ditulis ke log. ' +
+      (replacing ? 'Secret lama akan langsung tidak berlaku.' : ''),
+    ui.ButtonSet.OK_CANCEL
+  );
+  if (response.getSelectedButton() !== ui.Button.OK) {
+    return { saved: false, cancelled: true };
+  }
+
+  const secret = response.getResponseText().trim();
+  if (secret.length < 32) {
+    ui.alert('Secret belum disimpan', 'Secret harus minimal 32 karakter.', ui.ButtonSet.OK);
+    return { saved: false, invalid: true };
+  }
+
+  properties.setProperty(ORA_STRAVA_SYNC_SECRET_PROPERTY, secret);
+  ui.alert(
+    'Secret tersimpan',
+    'ORA_STRAVA_SYNC_SECRET berhasil disimpan. Gunakan nilai yang sama di aplikasi Windows.',
+    ui.ButtonSet.OK
+  );
+  return { saved: true, replaced: replacing };
 }
 
 /**
@@ -3317,6 +3875,38 @@ function cleanupExpiredSessions_(properties, nowMillis) {
   });
 }
 
+/**
+ * Editor-only maintenance. Safely removes only expired ORA import tokens and
+ * expired/invalid ORA login sessions. Production configuration is preserved.
+ */
+function cleanupOraExpiredProperties() {
+  const properties = PropertiesService.getScriptProperties();
+  const before = properties.getProperties();
+  const beforeKeys = Object.keys(before);
+  const nowMillis = Date.now();
+
+  cleanupExpiredImportTokens_(properties, nowMillis);
+  cleanupExpiredSessions_(properties, nowMillis);
+
+  const after = properties.getProperties();
+  const afterKeys = Object.keys(after);
+  const removedKeys = beforeKeys.filter(function (key) {
+    return !Object.prototype.hasOwnProperty.call(after, key);
+  });
+  const result = {
+    removed: removedKeys.length,
+    expiredImportTokensRemoved: removedKeys.filter(function (key) {
+      return key.indexOf(ORA_IMPORT_TOKEN_PROPERTY_PREFIX) === 0;
+    }).length,
+    expiredSessionsRemoved: removedKeys.filter(function (key) {
+      return key.indexOf(ORA_SESSION_PROPERTY_PREFIX) === 0;
+    }).length,
+    remainingProperties: afterKeys.length,
+  };
+  console.log(JSON.stringify(result));
+  return result;
+}
+
 function sessionCacheKey_(token) {
   const digest = Utilities.computeDigest(
     Utilities.DigestAlgorithm.SHA_256,
@@ -3560,6 +4150,7 @@ function setupBackend1() {
     ORA_SPREADSHEET_ID_PROPERTY,
     spreadsheet.getId()
   );
+  spreadsheet.setSpreadsheetTimeZone('Asia/Jakarta');
 
   ensureActivitySourceColumns_();
   ensureUserStatsSheet_();
@@ -3581,6 +4172,7 @@ function setupBackend1() {
     attendanceRecords: readSheetObjects_(ORA_SHEETS.ATTENDANCE_RECORDS).length,
     attendanceRewards: readSheetObjects_(ORA_SHEETS.ATTENDANCE_REWARDS).length,
     shortcutIcloudRows: readSheetObjects_(ORA_SHEETS.SHORTCUT_ICLOUD).length,
+    stravaAthleteMappings: readSheetObjects_(ORA_SHEETS.STRAVA_ATHLETE_MAP).length,
     activeConfigKeys: Object.keys(getActiveConfig_()).length,
     activeLevels: getActiveLevels_().length,
     activeQuestsToday: getActiveQuests_().length,
@@ -5165,6 +5757,91 @@ function testSharedActivityImportFoundation() {
     canonicalSourceRef: true,
     shortSourceRef: true,
     legacyActivity: true,
+  };
+}
+
+function testStravaSyncFoundation() {
+  const normalized = normalizeStravaSyncActivity_({
+    athleteName: 'Wandi Nurdyansyah',
+    athleteId: '118254162',
+    activityId: '19929716616',
+    activityDateLocal: '2026-08-28',
+    startDateUtc: '2026-08-27T23:14:54Z',
+    distanceKm: 6.74,
+    movingTimeSeconds: 2836,
+    elapsedTimeSeconds: 2868,
+    paceSecondsPerKm: 420,
+  });
+  assertBackendTest_(!normalized.error, 'Activity Strava valid harus dapat dinormalisasi.');
+
+  const participant = {
+    nik: '20000001',
+    nickname: 'WANDI',
+    divisionGuild: 'RUNNING',
+  };
+  const mapped = buildOraStravaActivityRow_(normalized.activity, participant, new Date(0));
+  const unmapped = buildOraStravaActivityRow_(normalized.activity, null, new Date(0));
+
+  assertBackendTest_(mapped[0] === 'STRAVA-19929716616', 'ActivityId ORA Strava tidak deterministik.');
+  assertBackendTest_(mapped[1] === '20000001', 'NIK mapped tidak masuk ke row Activities.');
+  assertBackendTest_(mapped[6] === 2836, 'DurationSec harus memakai moving time.');
+  assertBackendTest_(mapped[8] === '07:00', 'AvgPace Strava tidak terformat benar.');
+  assertBackendTest_(mapped[9] === 'COMPLETED', 'Mapped activity harus COMPLETED.');
+  assertBackendTest_(mapped[10] === 'STRAVA', 'Source activity harus STRAVA.');
+  assertBackendTest_(mapped[15] === '19929716616', 'SourceRef harus memakai activityId Strava.');
+  assertBackendTest_(
+    mapped[16] === 'https://www.strava.com/activities/19929716616',
+    'SourceUrl Strava tidak deterministik.'
+  );
+  assertBackendTest_(unmapped[1] === '' && unmapped[9] === 'UNMAPPED', 'UNMAPPED tidak boleh memiliki NIK atau status COMPLETED.');
+  assertBackendTest_(
+    stravaActivityEndTime_(normalized.activity) === '2026-08-28T00:02:42.000Z',
+    'EndTime harus memakai elapsed time dari start UTC.'
+  );
+
+  const optional = normalizeStravaSyncActivity_({
+    athleteId: '1',
+    activityId: '2',
+    activityDateLocal: '2026-08-28',
+    movingTimeSeconds: 600,
+  });
+  const optionalRow = buildOraStravaActivityRow_(optional.activity, null, new Date(0));
+  assertBackendTest_(optionalRow[7] === 0 && optionalRow[8] === '', 'Optional distance/pace harus aman tanpa data palsu.');
+  assertBackendTest_(
+    normalizeStravaSyncActivity_({ activityId: 'bad' }).error === 'invalid activityId',
+    'ActivityId invalid harus ditolak.'
+  );
+  const observed = collectObservedStravaAthletes_([
+    {
+      athleteId: '118254162',
+      athleteName: 'Wandi Updated',
+      activityId: '19929716616',
+      activityDateLocal: '2026-08-28',
+    },
+  ]);
+  assertBackendTest_(
+    observed['118254162'].athleteName === 'Wandi Updated',
+    'AthleteId dan AthleteName harus dikumpulkan untuk athlete map.'
+  );
+  assertBackendTest_(
+    stravaAthleteMapNote_('118254162', { '118254162': '20000001' }, {
+      '20000001': participant,
+    }) === 'MAPPED',
+    'Athlete map dengan participant ACTIVE harus berstatus MAPPED.'
+  );
+  assertBackendTest_(
+    stravaAthleteMapNote_('118254162', {}, {}) === 'UNMAPPED',
+    'Athlete map tanpa NIK aktif harus berstatus UNMAPPED.'
+  );
+
+  return {
+    normalize: true,
+    mappedRow: true,
+    unmappedNoXp: true,
+    deterministicUrl: true,
+    optionalStats: true,
+    endTime: true,
+    athleteMap: true,
   };
 }
 
