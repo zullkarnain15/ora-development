@@ -33,6 +33,14 @@ const ORA_IMPORT_MAX_ACTIVE = 100;
 const ORA_IMPORT_WEB_URL = 'https://zullkarnain15.github.io/ora-development/?t=';
 const ORA_STRAVA_SYNC_SECRET_PROPERTY = 'ORA_STRAVA_SYNC_SECRET';
 const ORA_STRAVA_SYNC_LOCK_TIMEOUT_MS = 30000;
+const ORA_STRAVA_SYNC_MAX_ACTIVITIES = 500;
+
+// Apps Script service calls are comparatively expensive. This cache lives only
+// for the current execution and prevents repeated spreadsheet opens/schema reads.
+const ORA_RUNTIME_CACHE = {
+  spreadsheet: null,
+  validatedSheets: {},
+};
 
 const ORA_CONFIG_DEFINITIONS = Object.freeze({
   MIN_DISTANCE_VALID_RUN_KM: Object.freeze({
@@ -303,6 +311,12 @@ function doPost(e) {
 function handleSyncStravaActivities_(request) {
   validateStravaSyncSecret_(request.secret);
   const activities = Array.isArray(request.activities) ? request.activities : [];
+  if (activities.length > ORA_STRAVA_SYNC_MAX_ACTIVITIES) {
+    throw oraError_(
+      'STRAVA_SYNC_BATCH_TOO_LARGE',
+      'Maksimal ' + ORA_STRAVA_SYNC_MAX_ACTIVITIES + ' aktivitas per sinkronisasi.'
+    );
+  }
   const lock = LockService.getScriptLock();
   lock.waitLock(ORA_STRAVA_SYNC_LOCK_TIMEOUT_MS);
 
@@ -310,7 +324,7 @@ function handleSyncStravaActivities_(request) {
     const sheet = getActivitiesSheet_();
     const athleteMapSheet = getValidatedSheet_(ORA_SHEETS.STRAVA_ATHLETE_MAP);
     const observedAthletes = upsertObservedStravaAthletes_(athleteMapSheet, activities);
-    const athleteNikMap = loadStravaAthleteNikMap_();
+    const athleteNikMap = loadStravaAthleteNikMap_(athleteMapSheet);
     const participants = loadActiveParticipantsByNik_();
     refreshObservedStravaAthleteMap_(
       athleteMapSheet,
@@ -372,7 +386,7 @@ function handleSyncStravaActivities_(request) {
       summary[status] += 1;
     });
 
-    const statsSnapshots = captureStravaUserStatsSnapshots_(statsEvents);
+    const statsBatch = prepareStravaUserStatsBatch_(statsEvents);
     const remapSnapshots = [];
     let appendStartRow = null;
     let appendedRowsWritten = false;
@@ -380,13 +394,10 @@ function handleSyncStravaActivities_(request) {
     try {
       remaps.forEach(function (remap) {
         const rowNumber = remap.existing.rowNumber;
-        const previousValues = sheet
-          .getRange(rowNumber, 1, 1, ORA_HEADERS.Activities.length)
-          .getValues()[0];
+        const previousValues = remap.existing.previousValues;
         remapSnapshots.push({ rowNumber: rowNumber, previousValues: previousValues });
         const updatedRow = buildOraStravaActivityRow_(remap.activity, remap.participant, now);
         if (previousValues[13]) updatedRow[13] = previousValues[13];
-        sheet.getRange(rowNumber, 1, 1, 2).setNumberFormat('@');
         sheet.getRange(rowNumber, 1, 1, ORA_HEADERS.Activities.length).setValues([updatedRow]);
       });
 
@@ -400,26 +411,9 @@ function handleSyncStravaActivities_(request) {
         appendedRowsWritten = true;
       }
 
-      statsEvents
-        .slice()
-        .sort(compareStravaStatsEvents_)
-        .forEach(function (event) {
-          const activity = event.activity;
-          const durationSec = stravaActivityDurationSeconds_(activity);
-          const distanceKm = activity.distanceKm == null ? 0 : activity.distanceKm;
-          upsertUserStats_({
-            nik: event.participant.nik,
-            nickname: event.participant.nickname,
-            division: event.participant.divisionGuild,
-            activityId: 'STRAVA-' + activity.activityId,
-            activityAt: activity.startDateUtc || activity.activityDateLocal,
-            durationSec: durationSec,
-            distanceKm: distanceKm,
-            activityXp: calculateActivityXp_(distanceKm, 'COMPLETED'),
-          });
-        });
+      applyStravaUserStatsBatch_(statsBatch);
     } catch (error) {
-      rollbackStravaUserStats_(statsSnapshots);
+      rollbackStravaUserStatsBatch_(statsBatch);
       if (appendedRowsWritten) {
         sheet.deleteRows(appendStartRow, rowsToAppend.length);
       }
@@ -570,8 +564,8 @@ function stravaAthleteMapNote_(athleteId, athleteNikMap, participants) {
   return mappedNik && participants[mappedNik] ? 'MAPPED' : 'UNMAPPED';
 }
 
-function loadStravaAthleteNikMap_() {
-  const sheet = getValidatedSheet_(ORA_SHEETS.STRAVA_ATHLETE_MAP);
+function loadStravaAthleteNikMap_(validatedSheet) {
+  const sheet = validatedSheet || getValidatedSheet_(ORA_SHEETS.STRAVA_ATHLETE_MAP);
   const values = sheet.getDataRange().getDisplayValues();
   if (values.length < 2) return {};
   const headers = createCaseInsensitiveHeaderMap_(values[0]);
@@ -612,11 +606,13 @@ function loadActiveParticipantsByNik_() {
 }
 
 function loadExistingStravaActivities_(sheet) {
-  const values = sheet.getDataRange().getDisplayValues();
+  const range = sheet.getDataRange();
+  const values = range.getValues();
+  const displayValues = range.getDisplayValues();
   if (values.length < 2) return {};
-  const headerMap = createHeaderMap_(values[0]);
+  const headerMap = createHeaderMap_(displayValues[0]);
   const result = {};
-  values.slice(1).forEach(function (row, index) {
+  displayValues.slice(1).forEach(function (row, index) {
     if (normalizeImportActivitySource_(row[headerMap.Source]) !== 'STRAVA') return;
     const sourceRef = String(row[headerMap.SourceRef] || '').trim();
     if (!sourceRef) return;
@@ -624,6 +620,7 @@ function loadExistingStravaActivities_(sheet) {
       rowNumber: index + 2,
       status: String(row[headerMap.Status] || '').trim().toUpperCase(),
       nik: normalizeDigits_(row[headerMap.NIK]),
+      previousValues: values[index + 1].slice(0, ORA_HEADERS.Activities.length),
     };
   });
   return result;
@@ -765,42 +762,182 @@ function compareStravaStatsEvents_(left, right) {
   return left.activity.activityId.localeCompare(right.activity.activityId);
 }
 
-function captureStravaUserStatsSnapshots_(statsEvents) {
-  const sheet = ensureUserStatsSheet_();
-  const snapshots = [];
-  const seen = {};
-  statsEvents.forEach(function (event) {
-    const nik = event.participant.nik;
-    if (seen[nik]) return;
-    seen[nik] = true;
-    const existing = findUserStatsRow_(sheet, nik);
-    snapshots.push({
-      nik: nik,
-      rowNumber: existing ? existing.rowNumber : null,
-      previousValues: existing
-        ? sheet.getRange(existing.rowNumber, 1, 1, ORA_HEADERS.User_Stats.length).getValues()[0]
-        : null,
+function aggregateStravaStatsEvents_(statsEvents, xpPerKm) {
+  const aggregates = {};
+  (statsEvents || [])
+    .slice()
+    .sort(compareStravaStatsEvents_)
+    .forEach(function (event) {
+      const participant = event.participant;
+      const activity = event.activity;
+      const nik = participant.nik;
+      const distanceKm = activity.distanceKm == null ? 0 : activity.distanceKm;
+      const durationSec = stravaActivityDurationSeconds_(activity);
+      if (!aggregates[nik]) {
+        aggregates[nik] = {
+          participant: participant,
+          activityCount: 0,
+          distanceKm: 0,
+          durationSec: 0,
+          activityXp: 0,
+          lastActivityId: '',
+          lastActivityAt: '',
+        };
+      }
+
+      const aggregate = aggregates[nik];
+      aggregate.activityCount += 1;
+      aggregate.distanceKm += Number(distanceKm) || 0;
+      aggregate.durationSec += Number(durationSec) || 0;
+      aggregate.activityXp += calculateActivityXpWithRate_(
+        distanceKm,
+        'COMPLETED',
+        xpPerKm
+      );
+      aggregate.lastActivityId = 'STRAVA-' + activity.activityId;
+      aggregate.lastActivityAt = activity.startDateUtc || activity.activityDateLocal;
     });
+
+  return Object.keys(aggregates).map(function (nik) {
+    return aggregates[nik];
   });
-  return { sheet: sheet, snapshots: snapshots };
 }
 
-function rollbackStravaUserStats_(snapshotSet) {
+function prepareStravaUserStatsBatch_(statsEvents) {
+  if (!statsEvents || statsEvents.length === 0) {
+    return {
+      sheet: null,
+      existingWrites: [],
+      appendRows: [],
+      snapshots: [],
+      appendStartRow: null,
+      appendedRowsWritten: false,
+    };
+  }
+
+  const sheet = ensureUserStatsSheet_();
+  const range = sheet.getDataRange();
+  const values = range.getValues();
+  const displayValues = range.getDisplayValues();
+  const headerMap = createHeaderMap_(displayValues[0]);
+  const existingByNik = {};
+
+  for (let index = 1; index < displayValues.length; index += 1) {
+    const nik = normalizeDigits_(displayValues[index][headerMap.NIK]);
+    if (!nik || existingByNik[nik]) continue;
+    const row = values[index];
+    existingByNik[nik] = {
+      rowNumber: index + 1,
+      previousValues: row.slice(0, ORA_HEADERS.User_Stats.length),
+      totalActivities: Number(row[headerMap.TotalActivities]) || 0,
+      totalDistanceKm: Number(row[headerMap.TotalDistanceKm]) || 0,
+      totalDurationSec: Number(row[headerMap.TotalDurationSec]) || 0,
+      totalXp: Number(row[headerMap.TotalXP]) || 0,
+    };
+  }
+
+  const levels = getActiveLevels_();
+  const aggregates = aggregateStravaStatsEvents_(statsEvents, getXpPerKm_());
+  const existingWrites = [];
+  const appendRows = [];
+  const snapshots = [];
+  const now = new Date();
+
+  aggregates.forEach(function (aggregate) {
+    const participant = aggregate.participant;
+    const existing = existingByNik[participant.nik] || null;
+    const totalActivities =
+      (existing ? existing.totalActivities : 0) + aggregate.activityCount;
+    const totalDistanceKm = roundDecimal_(
+      (existing ? existing.totalDistanceKm : 0) + aggregate.distanceKm,
+      3
+    );
+    const totalDurationSec = roundDecimal_(
+      (existing ? existing.totalDurationSec : 0) + aggregate.durationSec,
+      3
+    );
+    const totalXp = Math.round(
+      (existing ? existing.totalXp : 0) + aggregate.activityXp
+    );
+    const level = getLevelByXpFromLevels_(totalXp, levels);
+    const row = [
+      String(participant.nik),
+      String(participant.nickname || ''),
+      String(participant.divisionGuild || ''),
+      totalActivities,
+      totalDistanceKm,
+      totalDurationSec,
+      totalXp,
+      level.currentLevel,
+      level.currentLevelName,
+      level.nextLevelXp == null ? '' : level.nextLevelXp,
+      aggregate.lastActivityId,
+      aggregate.lastActivityAt,
+      now,
+    ];
+
+    if (existing) {
+      snapshots.push({
+        rowNumber: existing.rowNumber,
+        previousValues: existing.previousValues,
+      });
+      existingWrites.push({ rowNumber: existing.rowNumber, values: row });
+    } else {
+      appendRows.push(row);
+    }
+  });
+
+  return {
+    sheet: sheet,
+    existingWrites: existingWrites,
+    appendRows: appendRows,
+    snapshots: snapshots,
+    appendStartRow: appendRows.length > 0 ? sheet.getLastRow() + 1 : null,
+    appendedRowsWritten: false,
+  };
+}
+
+function applyStravaUserStatsBatch_(batch) {
+  if (!batch || !batch.sheet) return;
+
+  batch.existingWrites.forEach(function (write) {
+    batch.sheet.getRange(write.rowNumber, 1).setNumberFormat('@');
+    batch.sheet
+      .getRange(write.rowNumber, 1, 1, ORA_HEADERS.User_Stats.length)
+      .setValues([write.values]);
+  });
+
+  if (batch.appendRows.length > 0) {
+    ensureOraSheetRowCapacity_(
+      batch.sheet,
+      batch.appendStartRow + batch.appendRows.length - 1
+    );
+    batch.sheet
+      .getRange(batch.appendStartRow, 1, batch.appendRows.length, 1)
+      .setNumberFormat('@');
+    batch.sheet
+      .getRange(
+        batch.appendStartRow,
+        1,
+        batch.appendRows.length,
+        ORA_HEADERS.User_Stats.length
+      )
+      .setValues(batch.appendRows);
+    batch.appendedRowsWritten = true;
+  }
+}
+
+function rollbackStravaUserStatsBatch_(batch) {
+  if (!batch || !batch.sheet) return;
   try {
-    const newRows = [];
-    snapshotSet.snapshots.forEach(function (snapshot) {
-      if (snapshot.previousValues) {
-        snapshotSet.sheet
-          .getRange(snapshot.rowNumber, 1, 1, ORA_HEADERS.User_Stats.length)
-          .setValues([snapshot.previousValues]);
-      } else {
-        const current = findUserStatsRow_(snapshotSet.sheet, snapshot.nik);
-        if (current) newRows.push(current.rowNumber);
-      }
+    batch.snapshots.forEach(function (snapshot) {
+      batch.sheet
+        .getRange(snapshot.rowNumber, 1, 1, ORA_HEADERS.User_Stats.length)
+        .setValues([snapshot.previousValues]);
     });
-    newRows.sort(function (left, right) { return right - left; }).forEach(function (rowNumber) {
-      snapshotSet.sheet.deleteRow(rowNumber);
-    });
+    if (batch.appendedRowsWritten && batch.appendRows.length > 0) {
+      batch.sheet.deleteRows(batch.appendStartRow, batch.appendRows.length);
+    }
   } catch (rollbackError) {
     console.error('Strava User_Stats rollback failed: %s', safeErrorMessage_(rollbackError));
   }
@@ -3131,16 +3268,36 @@ function getXpPerKm_() {
 }
 
 function calculateActivityXp_(distanceKm, status) {
+  const normalizedStatus = String(status || '').trim().toUpperCase();
+  const distance = Number(distanceKm);
+  if (normalizedStatus !== 'COMPLETED' || !Number.isFinite(distance) || distance <= 0) {
+    return 0;
+  }
+  return calculateActivityXpWithRate_(distance, normalizedStatus, getXpPerKm_());
+}
+
+function calculateActivityXpWithRate_(distanceKm, status, xpPerKm) {
   if (String(status || '').trim().toUpperCase() !== 'COMPLETED') return 0;
 
   const distance = Number(distanceKm);
-  if (!Number.isFinite(distance) || distance <= 0) return 0;
-  return Math.round(distance * getXpPerKm_());
+  const rate = Number(xpPerKm);
+  if (
+    !Number.isFinite(distance) ||
+    distance <= 0 ||
+    !Number.isFinite(rate) ||
+    rate < 0
+  ) {
+    return 0;
+  }
+  return Math.round(distance * rate);
 }
 
 function getLevelByXp_(totalXp) {
+  return getLevelByXpFromLevels_(totalXp, getActiveLevels_());
+}
+
+function getLevelByXpFromLevels_(totalXp, levels) {
   const xp = Math.max(0, Number(totalXp) || 0);
-  const levels = getActiveLevels_();
   if (levels.length === 0) {
     throw oraError_('LEVEL_CONFIG_EMPTY', 'Level_Master tidak memiliki level aktif yang valid.');
   }
@@ -3939,6 +4096,10 @@ function readSheetObjects_(sheetName) {
 }
 
 function getValidatedSheet_(sheetName) {
+  if (ORA_RUNTIME_CACHE.validatedSheets[sheetName]) {
+    return ORA_RUNTIME_CACHE.validatedSheets[sheetName];
+  }
+
   const spreadsheet = getOraSpreadsheet_();
   const sheet = spreadsheet.getSheetByName(sheetName);
   if (!sheet) {
@@ -3964,15 +4125,19 @@ function getValidatedSheet_(sheetName) {
     );
   }
 
+  ORA_RUNTIME_CACHE.validatedSheets[sheetName] = sheet;
   return sheet;
 }
 
 function getOraSpreadsheet_() {
+  if (ORA_RUNTIME_CACHE.spreadsheet) return ORA_RUNTIME_CACHE.spreadsheet;
+
   const properties = PropertiesService.getScriptProperties();
   const spreadsheetId = properties.getProperty(ORA_SPREADSHEET_ID_PROPERTY);
 
   if (spreadsheetId) {
-    return SpreadsheetApp.openById(spreadsheetId);
+    ORA_RUNTIME_CACHE.spreadsheet = SpreadsheetApp.openById(spreadsheetId);
+    return ORA_RUNTIME_CACHE.spreadsheet;
   }
 
   const activeSpreadsheet = SpreadsheetApp.getActiveSpreadsheet();
@@ -3983,7 +4148,8 @@ function getOraSpreadsheet_() {
     );
   }
 
-  return activeSpreadsheet;
+  ORA_RUNTIME_CACHE.spreadsheet = activeSpreadsheet;
+  return ORA_RUNTIME_CACHE.spreadsheet;
 }
 
 function createHeaderMap_(headers) {
@@ -4150,6 +4316,8 @@ function setupBackend1() {
     ORA_SPREADSHEET_ID_PROPERTY,
     spreadsheet.getId()
   );
+  ORA_RUNTIME_CACHE.spreadsheet = spreadsheet;
+  ORA_RUNTIME_CACHE.validatedSheets = {};
   spreadsheet.setSpreadsheetTimeZone('Asia/Jakarta');
 
   ensureActivitySourceColumns_();
@@ -5833,6 +6001,35 @@ function testStravaSyncFoundation() {
     stravaAthleteMapNote_('118254162', {}, {}) === 'UNMAPPED',
     'Athlete map tanpa NIK aktif harus berstatus UNMAPPED.'
   );
+  const statsAggregates = aggregateStravaStatsEvents_([
+    {
+      participant: participant,
+      activity: {
+        activityId: '2',
+        activityDateLocal: '2026-08-29',
+        distanceKm: 2.25,
+        movingTimeSeconds: 900,
+      },
+    },
+    {
+      participant: participant,
+      activity: {
+        activityId: '1',
+        activityDateLocal: '2026-08-28',
+        distanceKm: 1.5,
+        movingTimeSeconds: 600,
+      },
+    },
+  ], 10);
+  assertBackendTest_(
+    statsAggregates.length === 1 &&
+      statsAggregates[0].activityCount === 2 &&
+      statsAggregates[0].distanceKm === 3.75 &&
+      statsAggregates[0].durationSec === 1500 &&
+      statsAggregates[0].activityXp === 38 &&
+      statsAggregates[0].lastActivityId === 'STRAVA-2',
+    'Batch User_Stats harus mengagregasi aktivitas per NIK secara kronologis.'
+  );
 
   return {
     normalize: true,
@@ -5842,6 +6039,7 @@ function testStravaSyncFoundation() {
     optionalStats: true,
     endTime: true,
     athleteMap: true,
+    batchStats: true,
   };
 }
 
