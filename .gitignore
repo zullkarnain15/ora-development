@@ -31,6 +31,10 @@
 **/service-account*.json
 **/credentials*.json
 
+# Local Google Apps Script / clasp configuration
+/ORA/backend/.clasp.json
+**/.clasprc.json
+
 # Operating system files
 .DS_Store
 Thumbs.db
