@@ -19,8 +19,7 @@ const _actions = {
   'submitActivity',
   'getActivityHistory',
   'getUserStats',
-  'getGuildSummary',
-  'getGuildDirectory',
+  'getGuildData',
   'getLeaderboard',
   'getQuestProgress',
   'claimQuestReward',
@@ -67,8 +66,7 @@ class _ContractTransport implements ApiTransport {
     'submitActivity' => '{"ok":true,"data":{"status":"SAVED","activityId":"A1","message":"Activity saved"}}',
     'getActivityHistory' => '{"ok":true,"data":{"activities":[{"activityId":"A1","startTime":"2026-08-14T00:00:00.000Z","endTime":"2026-08-14T00:30:00.000Z","durationSec":1800,"distanceKm":5.5,"avgPace":"05:27","status":"COMPLETED","source":"ANDROID","syncedAt":"2026-08-14T00:31:00.000Z"}],"limit":50,"offset":0,"total":1,"hasMore":false}}',
     'getUserStats' => '{"ok":true,"stats":{"nik":"1001","nickname":"RUNNER","division":"OPS","totalActivities":2,"totalDistanceKm":5.5,"totalDurationSec":1800,"totalXP":55,"currentLevel":2,"currentLevelName":"SCOUT","nextLevelXP":100,"lastActivityId":"A1","lastActivityAt":"2026-08-14","updatedAt":null}}',
-    'getGuildSummary' => '{"ok":true,"status":"ACTIVE","guild":{"guildId":"OPS","guildName":"OPS","displayName":"OPERATIONS","description":"FAST","memberCount":2,"activeMemberCount":2,"totalDistanceKm":10,"totalActivities":4,"totalXP":100,"currentLevel":2,"currentLevelName":"TEAM"},"members":[{"nik":"1001","nickname":"RUNNER","division":"OPS","totalDistanceKm":5.5,"totalActivities":2,"totalXP":55,"currentLevel":2,"currentLevelName":"SCOUT"}]}',
-    'getGuildDirectory' => '{"ok":true,"guilds":[{"guildId":"OPS","guildName":"OPS","displayName":"OPERATIONS","description":"FAST","status":"ACTIVE","memberCount":2,"activeMemberCount":2,"totalDistanceKm":10,"totalActivities":4,"totalXP":100,"currentLevel":2,"currentLevelName":"TEAM"}]}',
+    'getGuildData' => '{"ok":true,"status":"ACTIVE","guild":{"guildId":"OPS","guildName":"OPS","displayName":"OPERATIONS","description":"FAST","memberCount":2,"activeMemberCount":2,"totalDistanceKm":10,"totalActivities":4,"totalXP":100,"currentLevel":2,"currentLevelName":"TEAM"},"members":[{"nik":"1001","nickname":"RUNNER","division":"OPS","totalDistanceKm":5.5,"totalActivities":2,"totalXP":55,"currentLevel":2,"currentLevelName":"SCOUT"}],"guilds":[{"guildId":"OPS","guildName":"OPS","displayName":"OPERATIONS","description":"FAST","status":"ACTIVE","memberCount":2,"activeMemberCount":2,"totalDistanceKm":10,"totalActivities":4,"totalXP":100,"currentLevel":2,"currentLevelName":"TEAM"}],"leaderboard":{"scope":"GLOBAL","metric":"TOTAL_XP","status":"ACTIVE","entries":[{"rank":1,"nik":"1001","nickname":"RUNNER","division":"OPS","totalXP":55,"totalDistanceKm":5.5,"totalActivities":2,"currentLevel":2,"currentLevelName":"SCOUT"}],"currentUserRank":{"rank":1,"metricValue":55}}}',
     'getLeaderboard' => '{"ok":true,"scope":"GLOBAL","metric":"TOTAL_XP","status":"ACTIVE","leaderboard":[{"rank":1,"nik":"1001","nickname":"RUNNER","division":"OPS","totalXP":55,"totalDistanceKm":5.5,"totalActivities":2,"currentLevel":2,"currentLevelName":"SCOUT"}],"currentUserRank":{"rank":1,"metricValue":55}}',
     'getQuestProgress' => '{"ok":true,"quests":[{"questId":"Q1","name":"FIRST RUN","type":"RUN_COUNT","target":1,"unit":"RUN","rewardXp":10,"period":"DAILY","activeFrom":"","activeTo":"","progress":1,"progressPercent":100,"status":"ACTIVE","completed":true,"claimable":true,"claimed":false}]}',
     'claimQuestReward' => '{"ok":true,"data":{"status":"CLAIMED","claim":{"questId":"Q1","rewardXp":10,"status":"CLAIMED","claimId":"C1","claimedAt":"2026-08-14"}}}',
@@ -135,7 +133,13 @@ void main() {
     expect(history.single.distanceKm, 5.5);
     expect(history.single.averagePaceSecondsPerKm, 327);
     expect((await api.userStats('fixture')).totalXp, 55);
-    expect((await api.guildData('fixture')).guild?.resolvedName, 'OPERATIONS');
+    final guildData = await api.guildData(
+      'fixture',
+      LeaderboardScope.global,
+      LeaderboardMetric.totalXp,
+    );
+    expect(guildData.guild?.resolvedName, 'OPERATIONS');
+    expect(guildData.leaderboard?.entries.single.rank, 1);
     expect(
       (await api.leaderboard(
         'fixture',
@@ -179,6 +183,15 @@ void main() {
     );
     expect(leaderboard['scope'], 'GLOBAL');
     expect(leaderboard['metric'], 'TOTAL_XP');
+    final guildDataRequest = transport.requests.singleWhere(
+      (item) => item['action'] == 'getGuildData',
+    );
+    expect(guildDataRequest, {
+      'action': 'getGuildData',
+      'sessionToken': 'fixture',
+      'scope': 'GLOBAL',
+      'metric': 'TOTAL_XP',
+    });
     final activityHistory = transport.requests.singleWhere(
       (item) => item['action'] == 'getActivityHistory',
     );

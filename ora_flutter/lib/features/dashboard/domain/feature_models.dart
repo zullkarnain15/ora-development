@@ -375,11 +375,13 @@ class GuildData {
     required this.guild,
     required this.members,
     required this.directory,
+    this.leaderboard,
   });
   final String status;
   final GuildSummary? guild;
   final List<GuildMember> members;
   final List<GuildSummary> directory;
+  final LeaderboardData? leaderboard;
 }
 
 enum LeaderboardScope { global, guild }

@@ -66,6 +66,8 @@ class _FakeFeatureApi implements OraFeatureApi {
   BackendFailure? attendanceFailure;
   int attendanceCalls = 0;
   int statsCalls = 0;
+  int guildCalls = 0;
+  int leaderboardCalls = 0;
   LeaderboardScope? requestedScope;
   LeaderboardMetric? requestedMetric;
   int submitCalls = 0;
@@ -91,13 +93,30 @@ class _FakeFeatureApi implements OraFeatureApi {
   }
 
   @override
-  Future<GuildData> guildData(String sessionToken) async => guild;
+  Future<GuildData> guildData(
+    String sessionToken,
+    LeaderboardScope scope,
+    LeaderboardMetric metric,
+  ) async {
+    guildCalls++;
+    requestedScope = scope;
+    requestedMetric = metric;
+    return GuildData(
+      status: guild.status,
+      guild: guild.guild,
+      members: guild.members,
+      directory: guild.directory,
+      leaderboard: board,
+    );
+  }
+
   @override
   Future<LeaderboardData> leaderboard(
     String sessionToken,
     LeaderboardScope scope,
     LeaderboardMetric metric,
   ) async {
+    leaderboardCalls++;
     requestedScope = scope;
     requestedMetric = metric;
     return board;
@@ -608,6 +627,9 @@ void main() {
       final controller = _controller(api);
       await controller.loadGuild();
       expect(controller.guildData?.status, 'UNASSIGNED');
+      expect(controller.leaderboardPhase, LoadPhase.ready);
+      expect(api.guildCalls, 1);
+      expect(api.leaderboardCalls, 0);
 
       api.guild = GuildData(
         status: 'GUILD_INACTIVE',

@@ -9,7 +9,11 @@ abstract interface class OraFeatureApi {
   Future<List<OraLevel>> levels();
   Future<List<Quest>> quests();
   Future<UserStats> userStats(String sessionToken);
-  Future<GuildData> guildData(String sessionToken);
+  Future<GuildData> guildData(
+    String sessionToken,
+    LeaderboardScope scope,
+    LeaderboardMetric metric,
+  );
   Future<LeaderboardData> leaderboard(
     String sessionToken,
     LeaderboardScope scope,
@@ -76,29 +80,65 @@ class AppsScriptFeatureApi implements OraFeatureApi {
   }
 
   @override
-  Future<GuildData> guildData(String sessionToken) async {
-    final summary = await client.call('getGuildSummary', {
+  Future<GuildData> guildData(
+    String sessionToken,
+    LeaderboardScope scope,
+    LeaderboardMetric metric,
+  ) async {
+    final data = await client.call('getGuildData', {
       'sessionToken': sessionToken,
-    });
-    final directory = await client.call('getGuildDirectory', {
-      'sessionToken': sessionToken,
+      'scope': scope.apiValue,
+      'metric': metric.apiValue,
     });
     return _parse(() {
-      final guildJson = summary.object('guild');
+      final guildJson = data.object('guild');
+      final leaderboardJson = data.object('leaderboard');
+      if (leaderboardJson == null) {
+        return _invalid('Guild leaderboard is missing.');
+      }
+      final responseScope = leaderboardJson.string('scope') == 'GUILD'
+          ? LeaderboardScope.guild
+          : LeaderboardScope.global;
+      final responseMetric = switch (leaderboardJson.string('metric')) {
+        'TOTAL_DISTANCE' => LeaderboardMetric.totalDistance,
+        'TOTAL_ACTIVITIES' => LeaderboardMetric.totalActivities,
+        'TOTAL_XP' => LeaderboardMetric.totalXp,
+        _ => metric,
+      };
+      final rankJson = leaderboardJson.object('currentUserRank');
       return GuildData(
-        status: summary.string(
+        status: data.string(
           'status',
           fallback: guildJson == null ? 'UNASSIGNED' : 'ACTIVE',
         ),
         guild: guildJson == null ? null : GuildSummary.fromJson(guildJson),
-        members: summary
+        members: data
             .objects('members')
             .map(GuildMember.fromJson)
             .toList(growable: false),
-        directory: directory
+        directory: data
             .objects('guilds')
             .map(GuildSummary.fromJson)
             .toList(growable: false),
+        leaderboard: LeaderboardData(
+          scope: leaderboardJson.string('scope').isEmpty
+              ? scope
+              : responseScope,
+          metric: responseMetric,
+          status: leaderboardJson.string('status', fallback: 'ACTIVE'),
+          entries: leaderboardJson
+              .objects('entries')
+              .asMap()
+              .entries
+              .map((entry) => LeaderboardEntry.fromJson(entry.value, entry.key))
+              .toList(growable: false),
+          currentUserRank: rankJson == null
+              ? null
+              : CurrentUserRank(
+                  rank: rankJson.integer('rank'),
+                  metricValue: rankJson.decimal('metricValue'),
+                ),
+        ),
       );
     });
   }

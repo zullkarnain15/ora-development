@@ -195,21 +195,47 @@ class FeatureController extends ChangeNotifier {
 
   Future<void> loadGuild({bool force = false}) async {
     if (guildPhase == LoadPhase.loading ||
-        (!force && guildPhase == LoadPhase.ready)) {
+        leaderboardPhase == LoadPhase.loading ||
+        (!force &&
+            guildPhase == LoadPhase.ready &&
+            leaderboardPhase == LoadPhase.ready)) {
       return;
     }
     guildPhase = LoadPhase.loading;
+    leaderboardPhase = LoadPhase.loading;
     guildError = null;
+    leaderboardError = null;
     _safeNotify();
     try {
-      guildData = await api.guildData(session.sessionToken);
+      final result = await api.guildData(
+        session.sessionToken,
+        leaderboardScope,
+        leaderboardMetric,
+      );
+      final initialLeaderboard = result.leaderboard;
+      if (initialLeaderboard == null) {
+        throw const BackendFailure(
+          BackendFailureKind.invalidResponse,
+          'Guild leaderboard is missing.',
+        );
+      }
+      guildData = result;
+      leaderboardData = initialLeaderboard;
       guildPhase = LoadPhase.ready;
+      leaderboardPhase = LoadPhase.ready;
     } on BackendFailure catch (error) {
       guildPhase = LoadPhase.error;
       guildError = _featureMessage(error, 'GUILD DATA UNAVAILABLE - TRY AGAIN');
+      leaderboardPhase = LoadPhase.error;
+      leaderboardError = _featureMessage(
+        error,
+        'LEADERBOARD UNAVAILABLE - TRY AGAIN',
+      );
     } on Object {
       guildPhase = LoadPhase.error;
       guildError = 'GUILD DATA UNAVAILABLE - TRY AGAIN';
+      leaderboardPhase = LoadPhase.error;
+      leaderboardError = 'LEADERBOARD UNAVAILABLE - TRY AGAIN';
     }
     _safeNotify();
   }

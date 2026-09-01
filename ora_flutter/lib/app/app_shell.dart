@@ -245,7 +245,6 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
         break;
       case OraDestination.guild:
         unawaited(featureController.loadGuild());
-        unawaited(featureController.loadLeaderboard());
       case OraDestination.you:
         unawaited(featureController.loadHome());
     }

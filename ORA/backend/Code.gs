@@ -245,6 +245,7 @@ function normalizeIphoneShortcutLink_(value) {
  * {"action":"getGuildSummary","sessionToken":"..."}
  * {"action":"getGuildDirectory","sessionToken":"..."}
  * {"action":"getLeaderboard","sessionToken":"...","scope":"GLOBAL","metric":"TOTAL_XP"}
+ * {"action":"getGuildData","sessionToken":"...","scope":"GLOBAL","metric":"TOTAL_XP"}
  * {"action":"getQuestProgress","sessionToken":"..."}
  * {"action":"claimQuestReward","sessionToken":"...","questId":"DEV-Q001"}
  * {"action":"submitAttendance","sessionToken":"...","qrToken":"..."}
@@ -271,17 +272,33 @@ function doPost(e) {
       case 'consumeimporttoken':
         return handleConsumeImportToken_(request);
       case 'getactivityhistory':
-        return handleGetActivityHistory_(request);
+        return measureEndpointTiming_('getActivityHistory', function () {
+          return handleGetActivityHistory_(request);
+        });
       case 'getuserstats':
-        return handleGetUserStats_(request);
+        return measureEndpointTiming_('getUserStats', function () {
+          return handleGetUserStats_(request);
+        });
       case 'getguildsummary':
-        return handleGetGuildSummary_(request);
+        return measureEndpointTiming_('getGuildSummary', function () {
+          return handleGetGuildSummary_(request);
+        });
       case 'getguilddirectory':
-        return handleGetGuildDirectory_(request);
+        return measureEndpointTiming_('getGuildDirectory', function () {
+          return handleGetGuildDirectory_(request);
+        });
       case 'getleaderboard':
-        return handleGetLeaderboard_(request);
+        return measureEndpointTiming_('getLeaderboard', function () {
+          return handleGetLeaderboard_(request);
+        });
+      case 'getguilddata':
+        return measureEndpointTiming_('getGuildData', function () {
+          return handleGetGuildData_(request);
+        });
       case 'getquestprogress':
-        return handleGetQuestProgress_(request);
+        return measureEndpointTiming_('getQuestProgress', function () {
+          return handleGetQuestProgress_(request);
+        });
       case 'claimquestreward':
         return handleClaimQuestReward_(request);
       case 'submitattendance':
@@ -1816,6 +1833,94 @@ function handleGetUserStats_(request) {
     : createDefaultUserStats_(participant);
 
   return jsonUserStatsSuccess_(stats);
+}
+
+function handleGetGuildData_(request) {
+  const session = requireSession_(request.sessionToken);
+  const participants = getGuildParticipantRows_();
+  const participant = participants.find(function (candidate) {
+    return candidate.nik === normalizeDigits_(session.nik);
+  }) || null;
+
+  if (!participant) {
+    return jsonError_('PARTICIPANT_NOT_FOUND', 'Participant tidak ditemukan.');
+  }
+  if (participant.status !== 'ACTIVE') {
+    return jsonError_('ACCOUNT_INACTIVE', 'Akun ORA tidak aktif. Hubungi admin.');
+  }
+
+  const scope = String(request.scope || 'GLOBAL').trim().toUpperCase();
+  const metric = String(request.metric || 'TOTAL_XP').trim().toUpperCase();
+  if (scope !== 'GLOBAL' && scope !== 'GUILD') {
+    return jsonError_('INVALID_LEADERBOARD_SCOPE', 'Scope leaderboard belum didukung.');
+  }
+  if (!isSupportedLeaderboardMetric_(metric)) {
+    return jsonError_('INVALID_LEADERBOARD_METRIC', 'Metric leaderboard tidak dikenali.');
+  }
+
+  const statsByNik = getUserStatsByNikMap_();
+  const guildMasterRecords = getGuildMasterRecords_();
+  const levels = getActiveLevels_();
+  const defaultLevel = getDefaultGuildLevel_(levels);
+  const division = String(participant.divisionGuild || '').trim();
+  let guildStatus = 'UNASSIGNED';
+  let guild = null;
+  let members = [];
+
+  if (division) {
+    const guildResolution = resolveGuildMetadata_(division, guildMasterRecords);
+    const summary = buildGuildSummary_(
+      participant,
+      participants,
+      statsByNik,
+      defaultLevel,
+      guildResolution.guild,
+      levels
+    );
+    guildStatus = guildResolution.status;
+    guild = summary.guild;
+    members = summary.members;
+  }
+
+  const guilds = buildGuildDirectory_(
+    participants,
+    statsByNik,
+    defaultLevel,
+    guildMasterRecords,
+    levels
+  );
+  let eligibleParticipants = participants;
+  let leaderboardStatus = 'ACTIVE';
+  if (scope === 'GUILD') {
+    if (!division) {
+      eligibleParticipants = [];
+      leaderboardStatus = 'NO_GUILD';
+    } else {
+      const divisionKey = normalizeDivisionKey_(division);
+      eligibleParticipants = participants.filter(function (candidate) {
+        return normalizeDivisionKey_(candidate.divisionGuild) === divisionKey;
+      });
+    }
+  }
+  const leaderboard = buildLeaderboard_(
+    participant.nik,
+    eligibleParticipants,
+    statsByNik,
+    metric,
+    50
+  );
+
+  return jsonGuildDataSuccess_(
+    guildStatus,
+    guild,
+    members,
+    guilds,
+    scope,
+    metric,
+    leaderboardStatus,
+    leaderboard.leaderboard,
+    leaderboard.currentUserRank
+  );
 }
 
 function handleGetGuildSummary_(request) {
@@ -3685,8 +3790,8 @@ function getUserStatsByNikMap_() {
   return statsByNik;
 }
 
-function getDefaultGuildLevel_() {
-  const levels = getActiveLevels_();
+function getDefaultGuildLevel_(levelsSnapshot) {
+  const levels = Array.isArray(levelsSnapshot) ? levelsSnapshot : getActiveLevels_();
   return levels.length > 0
     ? { currentLevel: levels[0].level, currentLevelName: levels[0].levelName }
     : { currentLevel: 1, currentLevelName: '' };
@@ -3696,7 +3801,14 @@ function normalizeDivisionKey_(value) {
   return String(value == null ? '' : value).trim().toLowerCase();
 }
 
-function buildGuildSummary_(owner, participants, statsByNik, defaultLevel, guildMetadata) {
+function buildGuildSummary_(
+  owner,
+  participants,
+  statsByNik,
+  defaultLevel,
+  guildMetadata,
+  levelsSnapshot
+) {
   const membershipKey = String(owner.divisionGuild || '').trim();
   const divisionKey = normalizeDivisionKey_(membershipKey);
   const metadata = guildMetadata || {
@@ -3740,7 +3852,7 @@ function buildGuildSummary_(owner, participants, statsByNik, defaultLevel, guild
     };
   });
 
-  const guildLevel = resolveGuildLevel_(totalXp, defaultLevel);
+  const guildLevel = resolveGuildLevel_(totalXp, defaultLevel, levelsSnapshot);
 
   return {
     guild: {
@@ -3760,7 +3872,13 @@ function buildGuildSummary_(owner, participants, statsByNik, defaultLevel, guild
   };
 }
 
-function buildGuildDirectory_(participants, statsByNik, defaultLevel, guildMasterRecords) {
+function buildGuildDirectory_(
+  participants,
+  statsByNik,
+  defaultLevel,
+  guildMasterRecords,
+  levelsSnapshot
+) {
   const guildsByKey = {};
   const records = guildMasterRecords || [];
 
@@ -3800,7 +3918,7 @@ function buildGuildDirectory_(participants, statsByNik, defaultLevel, guildMaste
 
   return Object.keys(guildsByKey).map(function (key) {
     const guild = guildsByKey[key];
-    const guildLevel = resolveGuildLevel_(guild.totalXP, defaultLevel);
+    const guildLevel = resolveGuildLevel_(guild.totalXP, defaultLevel, levelsSnapshot);
     return {
       guildId: guild.guildId,
       guildName: guild.guildName,
@@ -3844,9 +3962,11 @@ function createGuildDirectoryBucket_(metadata, fallbackKey) {
   };
 }
 
-function resolveGuildLevel_(totalXp, defaultLevel) {
+function resolveGuildLevel_(totalXp, defaultLevel, levelsSnapshot) {
   try {
-    const level = getLevelByXp_(totalXp);
+    const level = Array.isArray(levelsSnapshot)
+      ? getLevelByXpFromLevels_(totalXp, levelsSnapshot)
+      : getLevelByXp_(totalXp);
     return {
       currentLevel: level.currentLevel,
       currentLevelName: level.currentLevelName,
@@ -4071,6 +4191,17 @@ function sessionCacheKey_(token) {
     Utilities.Charset.UTF_8
   );
   return ORA_SESSION_PROPERTY_PREFIX + Utilities.base64EncodeWebSafe(digest);
+}
+
+function measureEndpointTiming_(endpointName, callback) {
+  const startedAt = Date.now();
+
+  try {
+    return callback();
+  } finally {
+    const durationMs = Date.now() - startedAt;
+    console.log('[PERF] action=' + endpointName + ' total_ms=' + durationMs);
+  }
 }
 
 function readSheetObjects_(sheetName) {
@@ -4594,6 +4725,35 @@ function jsonGuildDirectorySuccess_(guilds) {
   });
 }
 
+function jsonGuildDataSuccess_(
+  status,
+  guild,
+  members,
+  guilds,
+  scope,
+  metric,
+  leaderboardStatus,
+  leaderboard,
+  currentUserRank
+) {
+  return jsonOutput_({
+    ok: true,
+    apiVersion: ORA_API_VERSION,
+    timestamp: new Date().toISOString(),
+    status: status,
+    guild: guild,
+    members: members,
+    guilds: guilds,
+    leaderboard: {
+      scope: scope,
+      metric: metric,
+      status: leaderboardStatus,
+      entries: leaderboard,
+      currentUserRank: currentUserRank,
+    },
+  });
+}
+
 function jsonLeaderboardSuccess_(scope, metric, leaderboard, currentUserRank, status) {
   return jsonOutput_({
     ok: true,
@@ -4930,6 +5090,61 @@ function testGetGuildSummary() {
   };
   console.log(JSON.stringify(summary, null, 2));
   return summary;
+}
+
+function testGetGuildDataRegression() {
+  const sessionToken = getOrCreateTestSessionToken_();
+  const request = {
+    sessionToken: sessionToken,
+    scope: 'GLOBAL',
+    metric: 'TOTAL_XP',
+  };
+  const combined = JSON.parse(handleGetGuildData_(request).getContent());
+  const summary = JSON.parse(handleGetGuildSummary_(request).getContent());
+  const directory = JSON.parse(handleGetGuildDirectory_(request).getContent());
+  const leaderboard = JSON.parse(handleGetLeaderboard_(request).getContent());
+
+  assertBackendTest_(combined.ok === true, 'getGuildData harus return ok true.');
+  assertBackendTest_(
+    combined.status === summary.status &&
+      JSON.stringify(combined.guild) === JSON.stringify(summary.guild) &&
+      JSON.stringify(combined.members) === JSON.stringify(summary.members),
+    'Guild status, summary, atau members berbeda dari endpoint lama.'
+  );
+  assertBackendTest_(
+    JSON.stringify(combined.guilds) === JSON.stringify(directory.guilds),
+    'Guild directory berbeda dari endpoint lama.'
+  );
+  assertBackendTest_(
+    combined.leaderboard.scope === leaderboard.scope &&
+      combined.leaderboard.metric === leaderboard.metric &&
+      combined.leaderboard.status === leaderboard.status &&
+      JSON.stringify(combined.leaderboard.entries) === JSON.stringify(leaderboard.leaderboard) &&
+      JSON.stringify(combined.leaderboard.currentUserRank) ===
+        JSON.stringify(leaderboard.currentUserRank),
+    'Leaderboard getGuildData berbeda dari endpoint lama.'
+  );
+
+  const serialized = JSON.stringify(combined).toLowerCase();
+  assertBackendTest_(serialized.indexOf('"pin"') === -1, 'getGuildData tidak boleh expose PIN.');
+  assertBackendTest_(
+    serialized.indexOf('sessiontoken') === -1,
+    'getGuildData tidak boleh expose session token.'
+  );
+
+  const result = {
+    ok: true,
+    accountCompared: true,
+    scope: combined.leaderboard.scope,
+    metric: combined.leaderboard.metric,
+    guildStatus: combined.status,
+    memberCount: combined.members.length,
+    directoryCount: combined.guilds.length,
+    leaderboardCount: combined.leaderboard.entries.length,
+    matchesLegacyEndpoints: true,
+  };
+  console.log(JSON.stringify(result, null, 2));
+  return result;
 }
 
 function testGuildSummaryFoundation() {

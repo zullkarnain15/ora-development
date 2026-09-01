@@ -21,10 +21,7 @@ class GuildScreen extends StatefulWidget {
 class _GuildScreenState extends State<GuildScreen> {
   GuildView view = GuildView.members;
 
-  Future<void> _refresh() => Future.wait([
-    widget.controller.loadGuild(force: true),
-    widget.controller.loadLeaderboard(force: true),
-  ]);
+  Future<void> _refresh() => widget.controller.loadGuild(force: true);
 
   @override
   Widget build(BuildContext context) => AnimatedBuilder(
