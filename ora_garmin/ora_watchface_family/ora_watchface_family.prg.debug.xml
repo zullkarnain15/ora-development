@@ -1,0 +1,251 @@
+<?xml version="1.0" encoding="UTF-8" standalone="no"?>
+<debugInfo>
+    <manifest filename="D:\ORA-Development\ora_garmin\ora_watchface_family\manifest.xml"/>
+    <pcToLineNum>
+        <entry filename="D:\\ORA-Development\\ora_garmin\\ora_watchface_family\\source\\ora_watchface_familyApp.mc" id="1" lineNum="26" parent="globals" pc="268435460" symbol="getApp"/>
+        <entry filename="D:\\ORA-Development\\ora_garmin\\ora_watchface_family\\source\\ora_watchface_familyApp.mc" id="1" lineNum="27" parent="globals" pc="268435470" symbol="getApp"/>
+        <entry filename="D:\\ORA-Development\\ora_garmin\\ora_watchface_family\\source\\ora_watchface_familyView.mc" id="2" lineNum="9" parent="globals/ora_watchface_familyView" pc="268435481" symbol="&lt;init&gt;"/>
+        <entry filename="D:\\ORA-Development\\ora_garmin\\ora_watchface_family\\gen\\006-B4258-00\\source\\Rez.mcgen" id="3" lineNum="7" parent="globals/Rez" pc="268435493" symbol="&lt;init&gt;"/>
+        <entry filename="D:\\ORA-Development\\ora_garmin\\ora_watchface_family\\source\\ora_watchface_familyApp.mc" id="4" lineNum="5" parent="globals/ora_watchface_familyApp" pc="268435513" symbol="&lt;init&gt;"/>
+        <entry filename="D:\\ORA-Development\\ora_garmin\\ora_watchface_family\\source\\ora_watchface_familyView.mc" id="5" lineNum="68" parent="globals/ora_watchface_familyView" pc="268435525" symbol="&lt;globals/ora_watchface_familyView/&lt;&gt;getDateString&gt;"/>
+        <entry filename="D:\\ORA-Development\\ora_garmin\\ora_watchface_family\\source\\ora_watchface_familyView.mc" id="5" lineNum="69" parent="globals/ora_watchface_familyView" pc="268435528" symbol="&lt;globals/ora_watchface_familyView/&lt;&gt;getDateString&gt;"/>
+        <entry filename="D:\\ORA-Development\\ora_garmin\\ora_watchface_family\\source\\ora_watchface_familyView.mc" id="5" lineNum="70" parent="globals/ora_watchface_familyView" pc="268435553" symbol="&lt;globals/ora_watchface_familyView/&lt;&gt;getDateString&gt;"/>
+        <entry filename="D:\\ORA-Development\\ora_garmin\\ora_watchface_family\\source\\ora_watchface_familyView.mc" id="5" lineNum="71" parent="globals/ora_watchface_familyView" pc="268435560" symbol="&lt;globals/ora_watchface_familyView/&lt;&gt;getDateString&gt;"/>
+        <entry filename="D:\\ORA-Development\\ora_garmin\\ora_watchface_family\\source\\ora_watchface_familyView.mc" id="5" lineNum="72" parent="globals/ora_watchface_familyView" pc="268435567" symbol="&lt;globals/ora_watchface_familyView/&lt;&gt;getDateString&gt;"/>
+        <entry filename="D:\\ORA-Development\\ora_garmin\\ora_watchface_family\\source\\ora_watchface_familyView.mc" id="6" lineNum="34" parent="globals/ora_watchface_familyView" pc="268435638" symbol="onLayout"/>
+        <entry filename="D:\\ORA-Development\\ora_garmin\\ora_watchface_family\\source\\ora_watchface_familyView.mc" id="7" lineNum="83" parent="globals/ora_watchface_familyView" pc="268435641" symbol="&lt;globals/ora_watchface_familyView/&lt;&gt;getStepsString&gt;"/>
+        <entry filename="D:\\ORA-Development\\ora_garmin\\ora_watchface_family\\source\\ora_watchface_familyView.mc" id="7" lineNum="84" parent="globals/ora_watchface_familyView" pc="268435644" symbol="&lt;globals/ora_watchface_familyView/&lt;&gt;getStepsString&gt;"/>
+        <entry filename="D:\\ORA-Development\\ora_garmin\\ora_watchface_family\\source\\ora_watchface_familyView.mc" id="7" lineNum="85" parent="globals/ora_watchface_familyView" pc="268435656" symbol="&lt;globals/ora_watchface_familyView/&lt;&gt;getStepsString&gt;"/>
+        <entry filename="D:\\ORA-Development\\ora_garmin\\ora_watchface_family\\source\\ora_watchface_familyView.mc" id="7" lineNum="86" parent="globals/ora_watchface_familyView" pc="268435678" symbol="&lt;globals/ora_watchface_familyView/&lt;&gt;getStepsString&gt;"/>
+        <entry filename="D:\\ORA-Development\\ora_garmin\\ora_watchface_family\\source\\ora_watchface_familyView.mc" id="7" lineNum="88" parent="globals/ora_watchface_familyView" pc="268435701" symbol="&lt;globals/ora_watchface_familyView/&lt;&gt;getStepsString&gt;"/>
+        <entry filename="D:\\ORA-Development\\ora_garmin\\ora_watchface_family\\source\\ora_watchface_familyView.mc" id="8" lineNum="75" parent="globals/ora_watchface_familyView" pc="268435707" symbol="&lt;globals/ora_watchface_familyView/&lt;&gt;getHeartRateString&gt;"/>
+        <entry filename="D:\\ORA-Development\\ora_garmin\\ora_watchface_family\\source\\ora_watchface_familyView.mc" id="8" lineNum="76" parent="globals/ora_watchface_familyView" pc="268435710" symbol="&lt;globals/ora_watchface_familyView/&lt;&gt;getHeartRateString&gt;"/>
+        <entry filename="D:\\ORA-Development\\ora_garmin\\ora_watchface_family\\source\\ora_watchface_familyView.mc" id="8" lineNum="77" parent="globals/ora_watchface_familyView" pc="268435722" symbol="&lt;globals/ora_watchface_familyView/&lt;&gt;getHeartRateString&gt;"/>
+        <entry filename="D:\\ORA-Development\\ora_garmin\\ora_watchface_family\\source\\ora_watchface_familyView.mc" id="8" lineNum="78" parent="globals/ora_watchface_familyView" pc="268435758" symbol="&lt;globals/ora_watchface_familyView/&lt;&gt;getHeartRateString&gt;"/>
+        <entry filename="D:\\ORA-Development\\ora_garmin\\ora_watchface_family\\source\\ora_watchface_familyView.mc" id="8" lineNum="80" parent="globals/ora_watchface_familyView" pc="268435781" symbol="&lt;globals/ora_watchface_familyView/&lt;&gt;getHeartRateString&gt;"/>
+        <entry filename="D:\\ORA-Development\\ora_garmin\\ora_watchface_family\\source\\ora_watchface_familyView.mc" id="9" lineNum="58" parent="globals/ora_watchface_familyView" pc="268435787" symbol="&lt;globals/ora_watchface_familyView/&lt;&gt;drawOutlinedText&gt;"/>
+        <entry filename="D:\\ORA-Development\\ora_garmin\\ora_watchface_family\\source\\ora_watchface_familyView.mc" id="9" lineNum="59" parent="globals/ora_watchface_familyView" pc="268435789" symbol="&lt;globals/ora_watchface_familyView/&lt;&gt;drawOutlinedText&gt;"/>
+        <entry filename="D:\\ORA-Development\\ora_garmin\\ora_watchface_family\\source\\ora_watchface_familyView.mc" id="9" lineNum="60" parent="globals/ora_watchface_familyView" pc="268435802" symbol="&lt;globals/ora_watchface_familyView/&lt;&gt;drawOutlinedText&gt;"/>
+        <entry filename="D:\\ORA-Development\\ora_garmin\\ora_watchface_family\\source\\ora_watchface_familyView.mc" id="9" lineNum="61" parent="globals/ora_watchface_familyView" pc="268435825" symbol="&lt;globals/ora_watchface_familyView/&lt;&gt;drawOutlinedText&gt;"/>
+        <entry filename="D:\\ORA-Development\\ora_garmin\\ora_watchface_family\\source\\ora_watchface_familyView.mc" id="9" lineNum="62" parent="globals/ora_watchface_familyView" pc="268435848" symbol="&lt;globals/ora_watchface_familyView/&lt;&gt;drawOutlinedText&gt;"/>
+        <entry filename="D:\\ORA-Development\\ora_garmin\\ora_watchface_family\\source\\ora_watchface_familyView.mc" id="9" lineNum="63" parent="globals/ora_watchface_familyView" pc="268435871" symbol="&lt;globals/ora_watchface_familyView/&lt;&gt;drawOutlinedText&gt;"/>
+        <entry filename="D:\\ORA-Development\\ora_garmin\\ora_watchface_family\\source\\ora_watchface_familyView.mc" id="9" lineNum="64" parent="globals/ora_watchface_familyView" pc="268435894" symbol="&lt;globals/ora_watchface_familyView/&lt;&gt;drawOutlinedText&gt;"/>
+        <entry filename="D:\\ORA-Development\\ora_garmin\\ora_watchface_family\\source\\ora_watchface_familyView.mc" id="9" lineNum="65" parent="globals/ora_watchface_familyView" pc="268435908" symbol="&lt;globals/ora_watchface_familyView/&lt;&gt;drawOutlinedText&gt;"/>
+        <entry filename="D:\\ORA-Development\\ora_garmin\\ora_watchface_family\\source\\ora_watchface_familyView.mc" id="10" lineNum="91" parent="globals/ora_watchface_familyView" pc="268435929" symbol="&lt;globals/ora_watchface_familyView/&lt;&gt;getBatteryString&gt;"/>
+        <entry filename="D:\\ORA-Development\\ora_garmin\\ora_watchface_family\\source\\ora_watchface_familyView.mc" id="10" lineNum="92" parent="globals/ora_watchface_familyView" pc="268435932" symbol="&lt;globals/ora_watchface_familyView/&lt;&gt;getBatteryString&gt;"/>
+        <entry filename="D:\\ORA-Development\\ora_garmin\\ora_watchface_family\\source\\ora_watchface_familyView.mc" id="10" lineNum="93" parent="globals/ora_watchface_familyView" pc="268435961" symbol="&lt;globals/ora_watchface_familyView/&lt;&gt;getBatteryString&gt;"/>
+        <entry filename="D:\\ORA-Development\\ora_garmin\\ora_watchface_family\\source\\ora_watchface_familyView.mc" id="11" lineNum="21" parent="globals/ora_watchface_familyView" pc="268435975" symbol="initialize"/>
+        <entry filename="D:\\ORA-Development\\ora_garmin\\ora_watchface_family\\source\\ora_watchface_familyView.mc" id="11" lineNum="22" parent="globals/ora_watchface_familyView" pc="268435977" symbol="initialize"/>
+        <entry filename="D:\\ORA-Development\\ora_garmin\\ora_watchface_family\\source\\ora_watchface_familyView.mc" id="11" lineNum="23" parent="globals/ora_watchface_familyView" pc="268435989" symbol="initialize"/>
+        <entry filename="D:\\ORA-Development\\ora_garmin\\ora_watchface_family\\source\\ora_watchface_familyView.mc" id="11" lineNum="24" parent="globals/ora_watchface_familyView" pc="268436027" symbol="initialize"/>
+        <entry filename="D:\\ORA-Development\\ora_garmin\\ora_watchface_family\\source\\ora_watchface_familyView.mc" id="11" lineNum="25" parent="globals/ora_watchface_familyView" pc="268436065" symbol="initialize"/>
+        <entry filename="D:\\ORA-Development\\ora_garmin\\ora_watchface_family\\source\\ora_watchface_familyView.mc" id="11" lineNum="26" parent="globals/ora_watchface_familyView" pc="268436103" symbol="initialize"/>
+        <entry filename="D:\\ORA-Development\\ora_garmin\\ora_watchface_family\\source\\ora_watchface_familyView.mc" id="11" lineNum="27" parent="globals/ora_watchface_familyView" pc="268436141" symbol="initialize"/>
+        <entry filename="D:\\ORA-Development\\ora_garmin\\ora_watchface_family\\source\\ora_watchface_familyView.mc" id="11" lineNum="28" parent="globals/ora_watchface_familyView" pc="268436179" symbol="initialize"/>
+        <entry filename="D:\\ORA-Development\\ora_garmin\\ora_watchface_family\\source\\ora_watchface_familyView.mc" id="11" lineNum="29" parent="globals/ora_watchface_familyView" pc="268436217" symbol="initialize"/>
+        <entry filename="D:\\ORA-Development\\ora_garmin\\ora_watchface_family\\source\\ora_watchface_familyView.mc" id="11" lineNum="30" parent="globals/ora_watchface_familyView" pc="268436255" symbol="initialize"/>
+        <entry filename="D:\\ORA-Development\\ora_garmin\\ora_watchface_family\\source\\ora_watchface_familyView.mc" id="11" lineNum="31" parent="globals/ora_watchface_familyView" pc="268436293" symbol="initialize"/>
+        <entry filename="D:\\ORA-Development\\ora_garmin\\ora_watchface_family\\source\\ora_watchface_familyView.mc" id="12" lineNum="37" parent="globals/ora_watchface_familyView" pc="268436332" symbol="onUpdate"/>
+        <entry filename="D:\\ORA-Development\\ora_garmin\\ora_watchface_family\\source\\ora_watchface_familyView.mc" id="12" lineNum="38" parent="globals/ora_watchface_familyView" pc="268436335" symbol="onUpdate"/>
+        <entry filename="D:\\ORA-Development\\ora_garmin\\ora_watchface_family\\source\\ora_watchface_familyView.mc" id="12" lineNum="39" parent="globals/ora_watchface_familyView" pc="268436347" symbol="onUpdate"/>
+        <entry filename="D:\\ORA-Development\\ora_garmin\\ora_watchface_family\\source\\ora_watchface_familyView.mc" id="12" lineNum="41" parent="globals/ora_watchface_familyView" pc="268436414" symbol="onUpdate"/>
+        <entry filename="D:\\ORA-Development\\ora_garmin\\ora_watchface_family\\source\\ora_watchface_familyView.mc" id="12" lineNum="42" parent="globals/ora_watchface_familyView" pc="268436426" symbol="onUpdate"/>
+        <entry filename="D:\\ORA-Development\\ora_garmin\\ora_watchface_family\\source\\ora_watchface_familyView.mc" id="12" lineNum="45" parent="globals/ora_watchface_familyView" pc="268436434" symbol="onUpdate"/>
+        <entry filename="D:\\ORA-Development\\ora_garmin\\ora_watchface_family\\source\\ora_watchface_familyView.mc" id="12" lineNum="46" parent="globals/ora_watchface_familyView" pc="268436451" symbol="onUpdate"/>
+        <entry filename="D:\\ORA-Development\\ora_garmin\\ora_watchface_family\\source\\ora_watchface_familyView.mc" id="12" lineNum="47" parent="globals/ora_watchface_familyView" pc="268436470" symbol="onUpdate"/>
+        <entry filename="D:\\ORA-Development\\ora_garmin\\ora_watchface_family\\source\\ora_watchface_familyView.mc" id="12" lineNum="48" parent="globals/ora_watchface_familyView" pc="268436490" symbol="onUpdate"/>
+        <entry filename="D:\\ORA-Development\\ora_garmin\\ora_watchface_family\\source\\ora_watchface_familyView.mc" id="12" lineNum="49" parent="globals/ora_watchface_familyView" pc="268436511" symbol="onUpdate"/>
+        <entry filename="D:\\ORA-Development\\ora_garmin\\ora_watchface_family\\source\\ora_watchface_familyView.mc" id="12" lineNum="51" parent="globals/ora_watchface_familyView" pc="268436531" symbol="onUpdate"/>
+        <entry filename="D:\\ORA-Development\\ora_garmin\\ora_watchface_family\\source\\ora_watchface_familyView.mc" id="12" lineNum="52" parent="globals/ora_watchface_familyView" pc="268436559" symbol="onUpdate"/>
+        <entry filename="D:\\ORA-Development\\ora_garmin\\ora_watchface_family\\source\\ora_watchface_familyView.mc" id="12" lineNum="53" parent="globals/ora_watchface_familyView" pc="268436591" symbol="onUpdate"/>
+        <entry filename="D:\\ORA-Development\\ora_garmin\\ora_watchface_family\\source\\ora_watchface_familyView.mc" id="12" lineNum="54" parent="globals/ora_watchface_familyView" pc="268436623" symbol="onUpdate"/>
+        <entry filename="D:\\ORA-Development\\ora_garmin\\ora_watchface_family\\source\\ora_watchface_familyView.mc" id="12" lineNum="55" parent="globals/ora_watchface_familyView" pc="268436656" symbol="onUpdate"/>
+        <entry filename="D:\\ORA-Development\\ora_garmin\\ora_watchface_family\\source\\ora_watchface_familyApp.mc" id="13" lineNum="12" parent="globals/ora_watchface_familyApp" pc="268436690" symbol="onStart"/>
+        <entry filename="D:\\ORA-Development\\ora_garmin\\ora_watchface_family\\source\\ora_watchface_familyApp.mc" id="14" lineNum="20" parent="globals/ora_watchface_familyApp" pc="268436693" symbol="getInitialView"/>
+        <entry filename="D:\\ORA-Development\\ora_garmin\\ora_watchface_family\\source\\ora_watchface_familyApp.mc" id="14" lineNum="21" parent="globals/ora_watchface_familyApp" pc="268436695" symbol="getInitialView"/>
+        <entry filename="D:\\ORA-Development\\ora_garmin\\ora_watchface_family\\source\\ora_watchface_familyApp.mc" id="15" lineNum="7" parent="globals/ora_watchface_familyApp" pc="268436721" symbol="initialize"/>
+        <entry filename="D:\\ORA-Development\\ora_garmin\\ora_watchface_family\\source\\ora_watchface_familyApp.mc" id="15" lineNum="8" parent="globals/ora_watchface_familyApp" pc="268436723" symbol="initialize"/>
+        <entry filename="D:\\ORA-Development\\ora_garmin\\ora_watchface_family\\source\\ora_watchface_familyApp.mc" id="16" lineNum="16" parent="globals/ora_watchface_familyApp" pc="268436736" symbol="onStop"/>
+        <entry filename="D:\\ORA-Development\\ora_garmin\\ora_watchface_family\\gen\\006-B4258-00\\source\\Rez.mcgen" id="17" lineNum="25" parent="globals/Rez/Layouts" pc="268436739" symbol="WatchFace"/>
+        <entry filename="D:\\ORA-Development\\ora_garmin\\ora_watchface_family\\gen\\006-B4258-00\\source\\Rez.mcgen" id="17" lineNum="26" parent="globals/Rez/Layouts" pc="268436749" symbol="WatchFace"/>
+    </pcToLineNum>
+    <symbolTable>
+        <entry id="8388639" module="true" symbol="Graphics"/>
+        <entry id="8388632" method="true" symbol="&lt;init&gt;"/>
+        <entry field="true" id="25" symbol="HeartRatePanel"/>
+        <entry id="8" object="true" symbol="ora_watchface_familyView"/>
+        <entry id="8388924" module="true" symbol="Gregorian"/>
+        <entry field="true" id="8388611" module="true" symbol="Toybox"/>
+        <entry id="18" method="true" symbol="&lt;globals/ora_watchface_familyView/&lt;&gt;drawOutlinedText&gt;"/>
+        <entry id="19" method="true" symbol="&lt;globals/ora_watchface_familyView/&lt;&gt;getBatteryString&gt;"/>
+        <entry field="true" id="33" symbol="AppName"/>
+        <entry id="8388633" module="true" symbol="ActivityMonitor"/>
+        <entry id="7" object="true" symbol="ora_watchface_familyApp"/>
+        <entry id="6" module="true" symbol="globals/Rez/Strings"/>
+        <entry id="8388772" module="true" object="true" symbol="Fonts"/>
+        <entry field="true" id="8388912" symbol="steps"/>
+        <entry id="22" method="true" symbol="&lt;globals/ora_watchface_familyView/&lt;&gt;getStepsString&gt;"/>
+        <entry id="8388648" module="true" symbol="WatchUi"/>
+        <entry id="2" module="true" symbol="globals/Rez"/>
+        <entry field="true" id="10" symbol="&lt;globals/ora_watchface_familyView/&lt;&gt;_batteryPanel&gt;"/>
+        <entry field="true" id="28" symbol="TimePanel"/>
+        <entry id="8389124" method="true" symbol="onUpdate"/>
+        <entry id="8389375" method="true" object="true" symbol="WatchFace"/>
+        <entry id="8388771" module="true" object="true" symbol="Drawables"/>
+        <entry id="8389275" method="true" symbol="getApp"/>
+        <entry field="true" id="32" symbol="PressDate"/>
+        <entry id="5" module="true" symbol="globals/Rez/Layouts"/>
+        <entry id="8389122" method="true" symbol="onLayout"/>
+        <entry field="true" id="31" symbol="JerseyTime"/>
+        <entry field="true" id="29" symbol="JerseyBattery"/>
+        <entry id="3" module="true" symbol="globals/Rez/Drawables"/>
+        <entry id="20" method="true" symbol="&lt;globals/ora_watchface_familyView/&lt;&gt;getDateString&gt;"/>
+        <entry field="true" id="13" symbol="&lt;globals/ora_watchface_familyView/&lt;&gt;_jerseyStat&gt;"/>
+        <entry field="true" id="24" symbol="BatteryPanel"/>
+        <entry field="true" id="17" symbol="&lt;globals/ora_watchface_familyView/&lt;&gt;_timePanel&gt;"/>
+        <entry id="8388644" module="true" symbol="System"/>
+        <entry field="true" id="30" symbol="JerseyStat"/>
+        <entry id="8388645" module="true" symbol="Time"/>
+        <entry id="8388769" module="true" object="true" symbol="Rez"/>
+        <entry id="8388640" module="true" symbol="Lang"/>
+        <entry field="true" id="15" symbol="&lt;globals/ora_watchface_familyView/&lt;&gt;_pressDate&gt;"/>
+        <entry field="true" id="26" symbol="LauncherIcon"/>
+        <entry id="8388610" symbol="statics"/>
+        <entry id="8389350" module="true" symbol="globals"/>
+        <entry id="8388770" module="true" object="true" symbol="Strings"/>
+        <entry field="true" id="8390146" module="true" symbol="Background"/>
+        <entry id="8388702" method="true" symbol="initialize"/>
+        <entry id="8389279" method="true" symbol="onStart"/>
+        <entry field="true" id="14" symbol="&lt;globals/ora_watchface_familyView/&lt;&gt;_jerseyTime&gt;"/>
+        <entry field="true" id="8388747" symbol="currentHeartRate"/>
+        <entry id="8389280" method="true" symbol="getInitialView"/>
+        <entry id="8389281" method="true" symbol="onStop"/>
+        <entry id="23" module="true" symbol="Layouts"/>
+        <entry field="true" id="9" symbol="&lt;globals/ora_watchface_familyView/&lt;&gt;_background&gt;"/>
+        <entry id="21" method="true" symbol="&lt;globals/ora_watchface_familyView/&lt;&gt;getHeartRateString&gt;"/>
+        <entry field="true" id="12" symbol="&lt;globals/ora_watchface_familyView/&lt;&gt;_jerseyBattery&gt;"/>
+        <entry field="true" id="11" symbol="&lt;globals/ora_watchface_familyView/&lt;&gt;_heartRatePanel&gt;"/>
+        <entry field="true" id="16" symbol="&lt;globals/ora_watchface_familyView/&lt;&gt;_stepsPanel&gt;"/>
+        <entry id="4" module="true" symbol="globals/Rez/Fonts"/>
+        <entry id="8388635" module="true" symbol="Application"/>
+        <entry field="true" id="27" symbol="StepsPanel"/>
+    </symbolTable>
+    <localVars>
+        <entry endPc="268435637" name="info" stackId="1" startPc="268435528"/>
+        <entry endPc="268435637" name="days" stackId="2" startPc="268435528"/>
+        <entry endPc="268435637" name="months" stackId="3" startPc="268435528"/>
+        <entry endPc="268435706" name="info" stackId="1" startPc="268435644"/>
+        <entry endPc="268435786" name="info" stackId="1" startPc="268435710"/>
+        <entry arg="true" endPc="268435928" name="dc" stackId="1" startPc="268435787"/>
+        <entry arg="true" endPc="268435928" name="x" stackId="2" startPc="268435787"/>
+        <entry arg="true" endPc="268435928" name="y" stackId="3" startPc="268435787"/>
+        <entry arg="true" endPc="268435928" name="font" stackId="4" startPc="268435787"/>
+        <entry arg="true" endPc="268435928" name="text" stackId="5" startPc="268435787"/>
+        <entry arg="true" endPc="268435928" name="color" stackId="6" startPc="268435787"/>
+        <entry endPc="268435974" name="percent" stackId="1" startPc="268435932"/>
+        <entry arg="true" endPc="268436689" name="dc" stackId="1" startPc="268436332"/>
+        <entry endPc="268436688" name="clockTime" stackId="2" startPc="268436335"/>
+        <entry endPc="268436688" name="timeString" stackId="3" startPc="268436335"/>
+        <entry arg="true" endPc="268436751" name="dc" stackId="1" startPc="268436739"/>
+    </localVars>
+    <deviceInfo deviceVersion="361e256b74f66f7ba19da23c7ec7c7f06ab33c5c" partNumber="006-B4258-00"/>
+    <annotations>
+        <annotationEntry annotation="initialized" class="Fonts" module="globals/Rez" symbol="PressDate"/>
+        <annotationEntry annotation="initialized" class="Drawables" module="globals/Rez" symbol="BatteryPanel"/>
+        <annotationEntry annotation="initialized" class="Drawables" module="globals/Rez" symbol="LauncherIcon"/>
+        <annotationEntry annotation="initialized" class="Drawables" module="globals/Rez" symbol="StepsPanel"/>
+        <annotationEntry annotation="initialized" class="Fonts" module="globals/Rez" symbol="JerseyTime"/>
+        <annotationEntry annotation="initialized" class="Drawables" module="globals/Rez" symbol="TimePanel"/>
+        <annotationEntry annotation="initialized" class="Fonts" module="globals/Rez" symbol="JerseyBattery"/>
+        <annotationEntry annotation="initialized" class="Fonts" module="globals/Rez" symbol="JerseyStat"/>
+        <annotationEntry annotation="initialized" class="Strings" module="globals/Rez" symbol="AppName"/>
+        <annotationEntry annotation="initialized" class="Drawables" module="globals/Rez" symbol="Background"/>
+        <annotationEntry annotation="initialized" class="Drawables" module="globals/Rez" symbol="HeartRatePanel"/>
+    </annotations>
+    <dataEntryOffsetMappings>
+        <dataEntry label="globals" offset="67" parentId="" symbolId="globals" type="module"/>
+        <dataEntry label="globals/ora_watchface_familyView" offset="134" parentId="globals" symbolId="ora_watchface_familyView" type="class"/>
+        <dataEntry label="globals/Rez" offset="322" parentId="globals" symbolId="Rez" type="module"/>
+        <dataEntry label="globals/ora_watchface_familyApp" offset="384" parentId="globals" symbolId="ora_watchface_familyApp" type="class"/>
+        <dataEntry label="globals/Rez/Drawables" offset="455" parentId="Rez" symbolId="Drawables" type="module"/>
+        <dataEntry label="globals/Rez/Layouts" offset="535" parentId="Rez" symbolId="Layouts" type="module"/>
+        <dataEntry label="globals/Rez/Fonts" offset="570" parentId="Rez" symbolId="Fonts" type="module"/>
+        <dataEntry label="globals/Rez/Strings" offset="632" parentId="Rez" symbolId="Strings" type="module"/>
+    </dataEntryOffsetMappings>
+    <functions>
+        <functionEntry accessMode="public" endPc="268435480" name="getApp" startPc="268435460">
+            <documentation/>
+        </functionEntry>
+        <functionEntry accessMode="public" endPc="268435492" name="&lt;init&gt;" parent="ora_watchface_familyView" startPc="268435481">
+            <documentation/>
+        </functionEntry>
+        <functionEntry accessMode="public" endPc="268435512" name="&lt;init&gt;" parent="Rez" startPc="268435493">
+            <documentation/>
+        </functionEntry>
+        <functionEntry accessMode="public" endPc="268435524" name="&lt;init&gt;" parent="ora_watchface_familyApp" startPc="268435513">
+            <documentation/>
+        </functionEntry>
+        <functionEntry accessMode="private" endPc="268435637" name="&lt;globals/ora_watchface_familyView/&lt;&gt;getDateString&gt;" parent="ora_watchface_familyView" startPc="268435525">
+            <documentation/>
+        </functionEntry>
+        <functionEntry accessMode="public" endPc="268435640" name="onLayout" parent="ora_watchface_familyView" startPc="268435638">
+            <param id="dc"/>
+            <documentation/>
+        </functionEntry>
+        <functionEntry accessMode="private" endPc="268435706" name="&lt;globals/ora_watchface_familyView/&lt;&gt;getStepsString&gt;" parent="ora_watchface_familyView" startPc="268435641">
+            <documentation/>
+        </functionEntry>
+        <functionEntry accessMode="private" endPc="268435786" name="&lt;globals/ora_watchface_familyView/&lt;&gt;getHeartRateString&gt;" parent="ora_watchface_familyView" startPc="268435707">
+            <documentation/>
+        </functionEntry>
+        <functionEntry accessMode="private" endPc="268435928" name="&lt;globals/ora_watchface_familyView/&lt;&gt;drawOutlinedText&gt;" parent="ora_watchface_familyView" startPc="268435787">
+            <param id="dc"/>
+            <param id="x"/>
+            <param id="y"/>
+            <param id="font"/>
+            <param id="text"/>
+            <param id="color"/>
+            <documentation/>
+        </functionEntry>
+        <functionEntry accessMode="private" endPc="268435974" name="&lt;globals/ora_watchface_familyView/&lt;&gt;getBatteryString&gt;" parent="ora_watchface_familyView" startPc="268435929">
+            <documentation/>
+        </functionEntry>
+        <functionEntry accessMode="public" endPc="268436331" name="initialize" parent="ora_watchface_familyView" startPc="268435975">
+            <documentation/>
+        </functionEntry>
+        <functionEntry accessMode="public" endPc="268436689" name="onUpdate" parent="ora_watchface_familyView" startPc="268436332">
+            <param id="dc"/>
+            <documentation/>
+        </functionEntry>
+        <functionEntry accessMode="public" name="&lt;init&gt;" parent="Drawables">
+            <documentation/>
+        </functionEntry>
+        <functionEntry accessMode="public" name="&lt;init&gt;" parent="Layouts">
+            <documentation/>
+        </functionEntry>
+        <functionEntry accessMode="public" name="&lt;init&gt;" parent="Fonts">
+            <documentation/>
+        </functionEntry>
+        <functionEntry accessMode="public" name="&lt;init&gt;" parent="Strings">
+            <documentation/>
+        </functionEntry>
+        <functionEntry accessMode="public" endPc="268436692" name="onStart" parent="ora_watchface_familyApp" startPc="268436690">
+            <param id="state"/>
+            <documentation/>
+        </functionEntry>
+        <functionEntry accessMode="public" endPc="268436720" name="getInitialView" parent="ora_watchface_familyApp" startPc="268436693">
+            <documentation/>
+        </functionEntry>
+        <functionEntry accessMode="public" endPc="268436735" name="initialize" parent="ora_watchface_familyApp" startPc="268436721">
+            <documentation/>
+        </functionEntry>
+        <functionEntry accessMode="public" endPc="268436738" name="onStop" parent="ora_watchface_familyApp" startPc="268436736">
+            <param id="state"/>
+            <documentation/>
+        </functionEntry>
+        <functionEntry accessMode="public" endPc="268436751" name="WatchFace" parent="Layouts" startPc="268436739">
+            <param id="dc"/>
+            <documentation/>
+        </functionEntry>
+    </functions>
+</debugInfo>

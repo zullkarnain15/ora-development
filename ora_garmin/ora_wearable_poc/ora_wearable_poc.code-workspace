@@ -1,0 +1,12 @@
+{
+	"folders": [
+		{
+			"path": "."
+		},
+		{
+			"name": "ora_watchface",
+			"path": "../ora_watchface"
+		}
+	],
+	"settings": {}
+}

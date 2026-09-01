@@ -1,0 +1,8 @@
+<drawables xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="https://developer.garmin.com/downloads/connect-iq/resources.xsd">
+    <bitmap id="LauncherIcon" filename="launcher_icon.svg" dithering="none" />
+    <bitmap id="Background" filename="family_wf_bg_main.png" dithering="none" />
+    <bitmap id="TimePanel" filename="family_wf_panel_time.png" dithering="none" />
+    <bitmap id="HeartRatePanel" filename="family_wf_panel_heartrate.png" dithering="none" />
+    <bitmap id="StepsPanel" filename="family_wf_panel_steps.png" dithering="none" />
+    <bitmap id="BatteryPanel" filename="family_wf_panel_battery.png" dithering="none" />
+</drawables>

@@ -1,0 +1,7 @@
+<fonts xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="https://developer.garmin.com/downloads/connect-iq/resources.xsd">
+    <font id="JerseyTime" filename="jersey_time.fnt" filter="0123456789:" />
+    <font id="PressDate" filename="press_date.fnt" filter="ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789 " />
+    <font id="JerseyStat" filename="jersey_stat.fnt" filter="0123456789-" />
+    <font id="JerseySteps" filename="jersey_steps.fnt" filter="0123456789" />
+    <font id="JerseyBattery" filename="jersey_battery.fnt" filter="0123456789%-" />
+</fonts>

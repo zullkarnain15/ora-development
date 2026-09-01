@@ -1,0 +1,245 @@
+<?xml version="1.0" encoding="UTF-8" standalone="no"?>
+<debugInfo>
+    <manifest filename="D:\ORA-Development\ora_garmin\ora_wearable_poc\manifest.xml"/>
+    <pcToLineNum>
+        <entry filename="d:\\ORA-Development\\ora_garmin\\ora_wearable_poc\\bin\\gen\\006-B3869-00\\source\\Rez.mcgen" id="1" lineNum="7" parent="globals/Rez" pc="268435460" symbol="&lt;init&gt;"/>
+        <entry filename="D:\\ORA-Development\\ora_garmin\\ora_wearable_poc\\source\\ora_wearable_pocView.mc" id="2" lineNum="8" parent="globals/ora_wearable_pocView" pc="268435484" symbol="&lt;init&gt;"/>
+        <entry filename="D:\\ORA-Development\\ora_garmin\\ora_wearable_poc\\source\\ora_wearable_pocApp.mc" id="3" lineNum="7" parent="globals/ora_wearable_pocApp" pc="268435503" symbol="&lt;init&gt;"/>
+        <entry filename="D:\\ORA-Development\\ora_garmin\\ora_wearable_poc\\source\\ora_wearable_pocView.mc" id="4" lineNum="15" parent="globals/ora_wearable_pocView" pc="268435522" symbol="compute"/>
+        <entry filename="D:\\ORA-Development\\ora_garmin\\ora_wearable_poc\\source\\ora_wearable_pocView.mc" id="4" lineNum="17" parent="globals/ora_wearable_pocView" pc="268435526" symbol="compute"/>
+        <entry filename="D:\\ORA-Development\\ora_garmin\\ora_wearable_poc\\source\\ora_wearable_pocView.mc" id="4" lineNum="18" parent="globals/ora_wearable_pocView" pc="268435533" symbol="compute"/>
+        <entry filename="D:\\ORA-Development\\ora_garmin\\ora_wearable_poc\\source\\ora_wearable_pocView.mc" id="4" lineNum="19" parent="globals/ora_wearable_pocView" pc="268435540" symbol="compute"/>
+        <entry filename="D:\\ORA-Development\\ora_garmin\\ora_wearable_poc\\source\\ora_wearable_pocView.mc" id="4" lineNum="21" parent="globals/ora_wearable_pocView" pc="268435547" symbol="compute"/>
+        <entry filename="D:\\ORA-Development\\ora_garmin\\ora_wearable_poc\\source\\ora_wearable_pocView.mc" id="4" lineNum="22" parent="globals/ora_wearable_pocView" pc="268435557" symbol="compute"/>
+        <entry filename="D:\\ORA-Development\\ora_garmin\\ora_wearable_poc\\source\\ora_wearable_pocView.mc" id="4" lineNum="23" parent="globals/ora_wearable_pocView" pc="268435564" symbol="compute"/>
+        <entry filename="D:\\ORA-Development\\ora_garmin\\ora_wearable_poc\\source\\ora_wearable_pocView.mc" id="4" lineNum="26" parent="globals/ora_wearable_pocView" pc="268435580" symbol="compute"/>
+        <entry filename="D:\\ORA-Development\\ora_garmin\\ora_wearable_poc\\source\\ora_wearable_pocView.mc" id="4" lineNum="27" parent="globals/ora_wearable_pocView" pc="268435590" symbol="compute"/>
+        <entry filename="D:\\ORA-Development\\ora_garmin\\ora_wearable_poc\\source\\ora_wearable_pocView.mc" id="4" lineNum="28" parent="globals/ora_wearable_pocView" pc="268435597" symbol="compute"/>
+        <entry filename="D:\\ORA-Development\\ora_garmin\\ora_wearable_poc\\source\\ora_wearable_pocView.mc" id="4" lineNum="31" parent="globals/ora_wearable_pocView" pc="268435613" symbol="compute"/>
+        <entry filename="D:\\ORA-Development\\ora_garmin\\ora_wearable_poc\\source\\ora_wearable_pocView.mc" id="4" lineNum="32" parent="globals/ora_wearable_pocView" pc="268435623" symbol="compute"/>
+        <entry filename="D:\\ORA-Development\\ora_garmin\\ora_wearable_poc\\source\\ora_wearable_pocView.mc" id="4" lineNum="33" parent="globals/ora_wearable_pocView" pc="268435630" symbol="compute"/>
+        <entry filename="D:\\ORA-Development\\ora_garmin\\ora_wearable_poc\\source\\ora_wearable_pocView.mc" id="4" lineNum="38" parent="globals/ora_wearable_pocView" pc="268435652" symbol="compute"/>
+        <entry filename="D:\\ORA-Development\\ora_garmin\\ora_wearable_poc\\source\\ora_wearable_pocView.mc" id="4" lineNum="39" parent="globals/ora_wearable_pocView" pc="268435663" symbol="compute"/>
+        <entry filename="D:\\ORA-Development\\ora_garmin\\ora_wearable_poc\\source\\ora_wearable_pocView.mc" id="4" lineNum="42" parent="globals/ora_wearable_pocView" pc="268435697" symbol="compute"/>
+        <entry filename="D:\\ORA-Development\\ora_garmin\\ora_wearable_poc\\source\\ora_wearable_pocView.mc" id="4" lineNum="44" parent="globals/ora_wearable_pocView" pc="268435707" symbol="compute"/>
+        <entry filename="D:\\ORA-Development\\ora_garmin\\ora_wearable_poc\\source\\ora_wearable_pocView.mc" id="4" lineNum="45" parent="globals/ora_wearable_pocView" pc="268435726" symbol="compute"/>
+        <entry filename="D:\\ORA-Development\\ora_garmin\\ora_wearable_poc\\source\\ora_wearable_pocView.mc" id="4" lineNum="46" parent="globals/ora_wearable_pocView" pc="268435751" symbol="compute"/>
+        <entry filename="D:\\ORA-Development\\ora_garmin\\ora_wearable_poc\\source\\ora_wearable_pocView.mc" id="4" lineNum="48" parent="globals/ora_wearable_pocView" pc="268435770" symbol="compute"/>
+        <entry filename="D:\\ORA-Development\\ora_garmin\\ora_wearable_poc\\source\\ora_wearable_pocView.mc" id="4" lineNum="53" parent="globals/ora_wearable_pocView" pc="268435825" symbol="compute"/>
+        <entry filename="D:\\ORA-Development\\ora_garmin\\ora_wearable_poc\\source\\ora_wearable_pocView.mc" id="5" lineNum="71" parent="globals/ora_wearable_pocView" pc="268435851" symbol="onTimerResume"/>
+        <entry filename="D:\\ORA-Development\\ora_garmin\\ora_wearable_poc\\source\\ora_wearable_pocView.mc" id="5" lineNum="72" parent="globals/ora_wearable_pocView" pc="268435853" symbol="onTimerResume"/>
+        <entry filename="D:\\ORA-Development\\ora_garmin\\ora_wearable_poc\\source\\ora_wearable_pocView.mc" id="6" lineNum="56" parent="globals/ora_wearable_pocView" pc="268435875" symbol="onTimerStart"/>
+        <entry filename="D:\\ORA-Development\\ora_garmin\\ora_wearable_poc\\source\\ora_wearable_pocView.mc" id="6" lineNum="57" parent="globals/ora_wearable_pocView" pc="268435877" symbol="onTimerStart"/>
+        <entry filename="D:\\ORA-Development\\ora_garmin\\ora_wearable_poc\\source\\ora_wearable_pocView.mc" id="6" lineNum="58" parent="globals/ora_wearable_pocView" pc="268435902" symbol="onTimerStart"/>
+        <entry filename="D:\\ORA-Development\\ora_garmin\\ora_wearable_poc\\source\\ora_wearable_pocView.mc" id="7" lineNum="67" parent="globals/ora_wearable_pocView" pc="268435924" symbol="onTimerPause"/>
+        <entry filename="D:\\ORA-Development\\ora_garmin\\ora_wearable_poc\\source\\ora_wearable_pocView.mc" id="7" lineNum="68" parent="globals/ora_wearable_pocView" pc="268435926" symbol="onTimerPause"/>
+        <entry filename="D:\\ORA-Development\\ora_garmin\\ora_wearable_poc\\source\\ora_wearable_pocView.mc" id="8" lineNum="10" parent="globals/ora_wearable_pocView" pc="268435948" symbol="initialize"/>
+        <entry filename="D:\\ORA-Development\\ora_garmin\\ora_wearable_poc\\source\\ora_wearable_pocView.mc" id="8" lineNum="11" parent="globals/ora_wearable_pocView" pc="268435950" symbol="initialize"/>
+        <entry filename="D:\\ORA-Development\\ora_garmin\\ora_wearable_poc\\source\\ora_wearable_pocView.mc" id="8" lineNum="12" parent="globals/ora_wearable_pocView" pc="268435968" symbol="initialize"/>
+        <entry filename="D:\\ORA-Development\\ora_garmin\\ora_wearable_poc\\source\\ora_wearable_pocView.mc" id="9" lineNum="80" parent="globals/ora_wearable_pocView" pc="268435982" symbol="pad2"/>
+        <entry filename="D:\\ORA-Development\\ora_garmin\\ora_wearable_poc\\source\\ora_wearable_pocView.mc" id="9" lineNum="81" parent="globals/ora_wearable_pocView" pc="268435984" symbol="pad2"/>
+        <entry filename="D:\\ORA-Development\\ora_garmin\\ora_wearable_poc\\source\\ora_wearable_pocView.mc" id="9" lineNum="82" parent="globals/ora_wearable_pocView" pc="268435995" symbol="pad2"/>
+        <entry filename="D:\\ORA-Development\\ora_garmin\\ora_wearable_poc\\source\\ora_wearable_pocView.mc" id="9" lineNum="85" parent="globals/ora_wearable_pocView" pc="268436016" symbol="pad2"/>
+        <entry filename="D:\\ORA-Development\\ora_garmin\\ora_wearable_poc\\source\\ora_wearable_pocView.mc" id="10" lineNum="63" parent="globals/ora_wearable_pocView" pc="268436028" symbol="onTimerStop"/>
+        <entry filename="D:\\ORA-Development\\ora_garmin\\ora_wearable_poc\\source\\ora_wearable_pocView.mc" id="10" lineNum="64" parent="globals/ora_wearable_pocView" pc="268436030" symbol="onTimerStop"/>
+        <entry filename="D:\\ORA-Development\\ora_garmin\\ora_wearable_poc\\source\\ora_wearable_pocView.mc" id="11" lineNum="75" parent="globals/ora_wearable_pocView" pc="268436052" symbol="onTimerReset"/>
+        <entry filename="D:\\ORA-Development\\ora_garmin\\ora_wearable_poc\\source\\ora_wearable_pocView.mc" id="11" lineNum="76" parent="globals/ora_wearable_pocView" pc="268436054" symbol="onTimerReset"/>
+        <entry filename="D:\\ORA-Development\\ora_garmin\\ora_wearable_poc\\source\\ora_wearable_pocView.mc" id="11" lineNum="77" parent="globals/ora_wearable_pocView" pc="268436075" symbol="onTimerReset"/>
+        <entry filename="D:\\ORA-Development\\ora_garmin\\ora_wearable_poc\\source\\ora_wearable_pocApp.mc" id="12" lineNum="31" parent="globals/ora_wearable_pocApp" pc="268436101" symbol="beginActivity"/>
+        <entry filename="D:\\ORA-Development\\ora_garmin\\ora_wearable_poc\\source\\ora_wearable_pocApp.mc" id="12" lineNum="32" parent="globals/ora_wearable_pocApp" pc="268436103" symbol="beginActivity"/>
+        <entry filename="D:\\ORA-Development\\ora_garmin\\ora_wearable_poc\\source\\ora_wearable_pocApp.mc" id="12" lineNum="33" parent="globals/ora_wearable_pocApp" pc="268436129" symbol="beginActivity"/>
+        <entry filename="D:\\ORA-Development\\ora_garmin\\ora_wearable_poc\\source\\ora_wearable_pocApp.mc" id="12" lineNum="34" parent="globals/ora_wearable_pocApp" pc="268436155" symbol="beginActivity"/>
+        <entry filename="D:\\ORA-Development\\ora_garmin\\ora_wearable_poc\\source\\ora_wearable_pocApp.mc" id="12" lineNum="35" parent="globals/ora_wearable_pocApp" pc="268436181" symbol="beginActivity"/>
+        <entry filename="D:\\ORA-Development\\ora_garmin\\ora_wearable_poc\\source\\ora_wearable_pocApp.mc" id="13" lineNum="40" parent="globals/ora_wearable_pocApp" pc="268436208" symbol="updateActivitySnapshot"/>
+        <entry filename="D:\\ORA-Development\\ora_garmin\\ora_wearable_poc\\source\\ora_wearable_pocApp.mc" id="13" lineNum="41" parent="globals/ora_wearable_pocApp" pc="268436212" symbol="updateActivitySnapshot"/>
+        <entry filename="D:\\ORA-Development\\ora_garmin\\ora_wearable_poc\\source\\ora_wearable_pocApp.mc" id="13" lineNum="43" parent="globals/ora_wearable_pocApp" pc="268436230" symbol="updateActivitySnapshot"/>
+        <entry filename="D:\\ORA-Development\\ora_garmin\\ora_wearable_poc\\source\\ora_wearable_pocApp.mc" id="13" lineNum="44" parent="globals/ora_wearable_pocApp" pc="268436249" symbol="updateActivitySnapshot"/>
+        <entry filename="D:\\ORA-Development\\ora_garmin\\ora_wearable_poc\\source\\ora_wearable_pocApp.mc" id="13" lineNum="45" parent="globals/ora_wearable_pocApp" pc="268436275" symbol="updateActivitySnapshot"/>
+        <entry filename="D:\\ORA-Development\\ora_garmin\\ora_wearable_poc\\source\\ora_wearable_pocApp.mc" id="13" lineNum="48" parent="globals/ora_wearable_pocApp" pc="268436301" symbol="updateActivitySnapshot"/>
+        <entry filename="D:\\ORA-Development\\ora_garmin\\ora_wearable_poc\\source\\ora_wearable_pocApp.mc" id="13" lineNum="49" parent="globals/ora_wearable_pocApp" pc="268436324" symbol="updateActivitySnapshot"/>
+        <entry filename="D:\\ORA-Development\\ora_garmin\\ora_wearable_poc\\source\\ora_wearable_pocApp.mc" id="14" lineNum="91" parent="globals/ora_wearable_pocApp" pc="268436348" symbol="getInitialView"/>
+        <entry filename="D:\\ORA-Development\\ora_garmin\\ora_wearable_poc\\source\\ora_wearable_pocApp.mc" id="14" lineNum="92" parent="globals/ora_wearable_pocApp" pc="268436350" symbol="getInitialView"/>
+        <entry filename="D:\\ORA-Development\\ora_garmin\\ora_wearable_poc\\source\\ora_wearable_pocApp.mc" id="15" lineNum="73" parent="globals/ora_wearable_pocApp" pc="268436391" symbol="readNumber"/>
+        <entry filename="D:\\ORA-Development\\ora_garmin\\ora_wearable_poc\\source\\ora_wearable_pocApp.mc" id="15" lineNum="74" parent="globals/ora_wearable_pocApp" pc="268436395" symbol="readNumber"/>
+        <entry filename="D:\\ORA-Development\\ora_garmin\\ora_wearable_poc\\source\\ora_wearable_pocApp.mc" id="15" lineNum="75" parent="globals/ora_wearable_pocApp" pc="268436414" symbol="readNumber"/>
+        <entry filename="D:\\ORA-Development\\ora_garmin\\ora_wearable_poc\\source\\ora_wearable_pocApp.mc" id="15" lineNum="76" parent="globals/ora_wearable_pocApp" pc="268436420" symbol="readNumber"/>
+        <entry filename="D:\\ORA-Development\\ora_garmin\\ora_wearable_poc\\source\\ora_wearable_pocApp.mc" id="15" lineNum="79" parent="globals/ora_wearable_pocApp" pc="268436429" symbol="readNumber"/>
+        <entry filename="D:\\ORA-Development\\ora_garmin\\ora_wearable_poc\\source\\ora_wearable_pocApp.mc" id="16" lineNum="66" parent="globals/ora_wearable_pocApp" pc="268436432" symbol="buildPayload"/>
+        <entry filename="D:\\ORA-Development\\ora_garmin\\ora_wearable_poc\\source\\ora_wearable_pocApp.mc" id="16" lineNum="67" parent="globals/ora_wearable_pocApp" pc="268436434" symbol="buildPayload"/>
+        <entry filename="D:\\ORA-Development\\ora_garmin\\ora_wearable_poc\\source\\ora_wearable_pocApp.mc" id="17" lineNum="83" parent="globals/ora_wearable_pocApp" pc="268436494" symbol="logFinalSnapshot"/>
+        <entry filename="D:\\ORA-Development\\ora_garmin\\ora_wearable_poc\\source\\ora_wearable_pocApp.mc" id="17" lineNum="84" parent="globals/ora_wearable_pocApp" pc="268436496" symbol="logFinalSnapshot"/>
+        <entry filename="D:\\ORA-Development\\ora_garmin\\ora_wearable_poc\\source\\ora_wearable_pocApp.mc" id="17" lineNum="85" parent="globals/ora_wearable_pocApp" pc="268436517" symbol="logFinalSnapshot"/>
+        <entry filename="D:\\ORA-Development\\ora_garmin\\ora_wearable_poc\\source\\ora_wearable_pocApp.mc" id="17" lineNum="86" parent="globals/ora_wearable_pocApp" pc="268436564" symbol="logFinalSnapshot"/>
+        <entry filename="D:\\ORA-Development\\ora_garmin\\ora_wearable_poc\\source\\ora_wearable_pocApp.mc" id="17" lineNum="87" parent="globals/ora_wearable_pocApp" pc="268436611" symbol="logFinalSnapshot"/>
+        <entry filename="D:\\ORA-Development\\ora_garmin\\ora_wearable_poc\\source\\ora_wearable_pocApp.mc" id="18" lineNum="22" parent="globals/ora_wearable_pocApp" pc="268436659" symbol="onStart"/>
+        <entry filename="D:\\ORA-Development\\ora_garmin\\ora_wearable_poc\\source\\ora_wearable_pocApp.mc" id="19" lineNum="53" parent="globals/ora_wearable_pocApp" pc="268436662" symbol="buildPendingPayload"/>
+        <entry filename="D:\\ORA-Development\\ora_garmin\\ora_wearable_poc\\source\\ora_wearable_pocApp.mc" id="19" lineNum="54" parent="globals/ora_wearable_pocApp" pc="268436666" symbol="buildPendingPayload"/>
+        <entry filename="D:\\ORA-Development\\ora_garmin\\ora_wearable_poc\\source\\ora_wearable_pocApp.mc" id="19" lineNum="55" parent="globals/ora_wearable_pocApp" pc="268436688" symbol="buildPendingPayload"/>
+        <entry filename="D:\\ORA-Development\\ora_garmin\\ora_wearable_poc\\source\\ora_wearable_pocApp.mc" id="19" lineNum="56" parent="globals/ora_wearable_pocApp" pc="268436705" symbol="buildPendingPayload"/>
+        <entry filename="D:\\ORA-Development\\ora_garmin\\ora_wearable_poc\\source\\ora_wearable_pocApp.mc" id="19" lineNum="59" parent="globals/ora_wearable_pocApp" pc="268436710" symbol="buildPendingPayload"/>
+        <entry filename="D:\\ORA-Development\\ora_garmin\\ora_wearable_poc\\source\\ora_wearable_pocApp.mc" id="20" lineNum="17" parent="globals/ora_wearable_pocApp" pc="268436770" symbol="initialize"/>
+        <entry filename="D:\\ORA-Development\\ora_garmin\\ora_wearable_poc\\source\\ora_wearable_pocApp.mc" id="20" lineNum="18" parent="globals/ora_wearable_pocApp" pc="268436772" symbol="initialize"/>
+        <entry filename="D:\\ORA-Development\\ora_garmin\\ora_wearable_poc\\source\\ora_wearable_pocApp.mc" id="21" lineNum="26" parent="globals/ora_wearable_pocApp" pc="268436791" symbol="onStop"/>
+    </pcToLineNum>
+    <symbolTable>
+        <entry id="8388639" module="true" symbol="Graphics"/>
+        <entry id="8388632" method="true" symbol="&lt;init&gt;"/>
+        <entry id="13" method="true" symbol="updateActivitySnapshot"/>
+        <entry id="8390424" module="true" symbol="Storage"/>
+        <entry id="7" method="true" symbol="pad2"/>
+        <entry id="8389748" method="true" symbol="onTimerStop"/>
+        <entry field="true" id="8388611" module="true" symbol="Toybox"/>
+        <entry id="11" method="true" symbol="logFinalSnapshot"/>
+        <entry id="8389747" method="true" symbol="onTimerStart"/>
+        <entry field="true" id="15" symbol="AppName"/>
+        <entry id="8389749" method="true" symbol="onTimerPause"/>
+        <entry id="4" module="true" symbol="globals/Rez/Strings"/>
+        <entry id="8388631" module="true" symbol="Activity"/>
+        <entry id="8388648" module="true" symbol="WatchUi"/>
+        <entry id="2" module="true" symbol="globals/Rez"/>
+        <entry id="5" object="true" symbol="ora_wearable_pocApp"/>
+        <entry id="8388771" module="true" object="true" symbol="Drawables"/>
+        <entry id="12" method="true" symbol="readNumber"/>
+        <entry id="8389137" method="true" symbol="compute"/>
+        <entry id="10" method="true" symbol="buildPendingPayload"/>
+        <entry id="3" module="true" symbol="globals/Rez/Drawables"/>
+        <entry id="8389752" method="true" symbol="onTimerReset"/>
+        <entry id="9" method="true" symbol="buildPayload"/>
+        <entry id="8388644" module="true" symbol="System"/>
+        <entry id="8388645" module="true" symbol="Time"/>
+        <entry id="8388769" module="true" object="true" symbol="Rez"/>
+        <entry id="8388640" module="true" symbol="Lang"/>
+        <entry field="true" id="14" symbol="LauncherIcon"/>
+        <entry id="8388610" symbol="statics"/>
+        <entry id="8" method="true" symbol="beginActivity"/>
+        <entry id="8389350" module="true" symbol="globals"/>
+        <entry id="8388770" module="true" object="true" symbol="Strings"/>
+        <entry id="8388702" method="true" symbol="initialize"/>
+        <entry id="8389279" method="true" symbol="onStart"/>
+        <entry id="8389280" method="true" symbol="getInitialView"/>
+        <entry id="8389281" method="true" symbol="onStop"/>
+        <entry id="8389750" method="true" symbol="onTimerResume"/>
+        <entry id="8388635" module="true" symbol="Application"/>
+        <entry id="6" object="true" symbol="ora_wearable_pocView"/>
+    </symbolTable>
+    <localVars>
+        <entry arg="true" endPc="268435850" name="info" stackId="1" startPc="268435522"/>
+        <entry endPc="268435850" name="startSeconds" stackId="2" startPc="268435526"/>
+        <entry endPc="268435850" name="distanceMeters" stackId="3" startPc="268435526"/>
+        <entry endPc="268435850" name="durationSeconds" stackId="4" startPc="268435526"/>
+        <entry endPc="268435850" name="startTime" stackId="5" startPc="268435526"/>
+        <entry endPc="268435850" name="elapsedDistance" stackId="6" startPc="268435526"/>
+        <entry endPc="268435850" name="timerTime" stackId="7" startPc="268435526"/>
+        <entry endPc="268435850" name="distanceKm" stackId="8" startPc="268435526"/>
+        <entry endPc="268435850" name="hours" stackId="9" startPc="268435526"/>
+        <entry endPc="268435850" name="minutes" stackId="10" startPc="268435526"/>
+        <entry endPc="268435850" name="seconds" stackId="11" startPc="268435526"/>
+        <entry endPc="268435850" name="timeText" stackId="12" startPc="268435526"/>
+        <entry arg="true" endPc="268436027" name="value" stackId="1" startPc="268435982"/>
+        <entry arg="true" endPc="268436347" name="start" stackId="1" startPc="268436208"/>
+        <entry arg="true" endPc="268436347" name="distance" stackId="2" startPc="268436208"/>
+        <entry arg="true" endPc="268436347" name="duration" stackId="3" startPc="268436208"/>
+        <entry endPc="268436346" name="storedStart" stackId="4" startPc="268436212"/>
+        <entry arg="true" endPc="268436431" name="key" stackId="1" startPc="268436391"/>
+        <entry endPc="268436431" name="value" stackId="2" startPc="268436395"/>
+        <entry arg="true" endPc="268436493" name="start" stackId="1" startPc="268436432"/>
+        <entry arg="true" endPc="268436493" name="distance" stackId="2" startPc="268436432"/>
+        <entry arg="true" endPc="268436493" name="duration" stackId="3" startPc="268436432"/>
+        <entry endPc="268436769" name="status" stackId="1" startPc="268436666"/>
+    </localVars>
+    <deviceInfo deviceVersion="45fe3cbb0de8ea0a70e12628d2697915f1272301" partNumber="006-B3869-00"/>
+    <annotations>
+        <annotationEntry annotation="initialized" class="Drawables" module="globals/Rez" symbol="LauncherIcon"/>
+        <annotationEntry annotation="initialized" class="Strings" module="globals/Rez" symbol="AppName"/>
+    </annotations>
+    <dataEntryOffsetMappings>
+        <dataEntry label="globals" offset="55" parentId="" symbolId="globals" type="module"/>
+        <dataEntry label="globals/Rez" offset="118" parentId="globals" symbolId="Rez" type="module"/>
+        <dataEntry label="globals/ora_wearable_pocView" offset="165" parentId="globals" symbolId="ora_wearable_pocView" type="class"/>
+        <dataEntry label="globals/ora_wearable_pocApp" offset="268" parentId="globals" symbolId="ora_wearable_pocApp" type="class"/>
+        <dataEntry label="globals/Rez/Drawables" offset="387" parentId="Rez" symbolId="Drawables" type="module"/>
+        <dataEntry label="globals/Rez/Strings" offset="426" parentId="Rez" symbolId="Strings" type="module"/>
+    </dataEntryOffsetMappings>
+    <functions>
+        <functionEntry accessMode="public" endPc="268435483" name="&lt;init&gt;" parent="Rez" startPc="268435460">
+            <documentation/>
+        </functionEntry>
+        <functionEntry accessMode="public" endPc="268435502" name="&lt;init&gt;" parent="ora_wearable_pocView" startPc="268435484">
+            <documentation/>
+        </functionEntry>
+        <functionEntry accessMode="public" endPc="268435521" name="&lt;init&gt;" parent="ora_wearable_pocApp" startPc="268435503">
+            <documentation/>
+        </functionEntry>
+        <functionEntry accessMode="public" name="&lt;init&gt;" parent="Drawables">
+            <documentation/>
+        </functionEntry>
+        <functionEntry accessMode="public" name="&lt;init&gt;" parent="Strings">
+            <documentation/>
+        </functionEntry>
+        <functionEntry accessMode="public" endPc="268435850" name="compute" parent="ora_wearable_pocView" startPc="268435522">
+            <param id="info"/>
+            <documentation/>
+        </functionEntry>
+        <functionEntry accessMode="public" endPc="268435874" name="onTimerResume" parent="ora_wearable_pocView" startPc="268435851">
+            <documentation/>
+        </functionEntry>
+        <functionEntry accessMode="public" endPc="268435923" name="onTimerStart" parent="ora_wearable_pocView" startPc="268435875">
+            <documentation/>
+        </functionEntry>
+        <functionEntry accessMode="public" endPc="268435947" name="onTimerPause" parent="ora_wearable_pocView" startPc="268435924">
+            <documentation/>
+        </functionEntry>
+        <functionEntry accessMode="public" endPc="268435981" name="initialize" parent="ora_wearable_pocView" startPc="268435948">
+            <documentation/>
+        </functionEntry>
+        <functionEntry accessMode="public" endPc="268436027" name="pad2" parent="ora_wearable_pocView" startPc="268435982">
+            <param id="value"/>
+            <documentation/>
+        </functionEntry>
+        <functionEntry accessMode="public" endPc="268436051" name="onTimerStop" parent="ora_wearable_pocView" startPc="268436028">
+            <documentation/>
+        </functionEntry>
+        <functionEntry accessMode="public" endPc="268436100" name="onTimerReset" parent="ora_wearable_pocView" startPc="268436052">
+            <documentation/>
+        </functionEntry>
+        <functionEntry accessMode="public" endPc="268436207" name="beginActivity" parent="ora_wearable_pocApp" startPc="268436101">
+            <documentation/>
+        </functionEntry>
+        <functionEntry accessMode="public" endPc="268436347" name="updateActivitySnapshot" parent="ora_wearable_pocApp" startPc="268436208">
+            <param id="start"/>
+            <param id="distance"/>
+            <param id="duration"/>
+            <documentation/>
+        </functionEntry>
+        <functionEntry accessMode="public" endPc="268436390" name="getInitialView" parent="ora_wearable_pocApp" startPc="268436348">
+            <documentation/>
+        </functionEntry>
+        <functionEntry accessMode="public" endPc="268436431" name="readNumber" parent="ora_wearable_pocApp" startPc="268436391">
+            <param id="key"/>
+            <documentation/>
+        </functionEntry>
+        <functionEntry accessMode="public" endPc="268436493" name="buildPayload" parent="ora_wearable_pocApp" startPc="268436432">
+            <param id="start"/>
+            <param id="distance"/>
+            <param id="duration"/>
+            <documentation/>
+        </functionEntry>
+        <functionEntry accessMode="public" endPc="268436658" name="logFinalSnapshot" parent="ora_wearable_pocApp" startPc="268436494">
+            <documentation/>
+        </functionEntry>
+        <functionEntry accessMode="public" endPc="268436661" name="onStart" parent="ora_wearable_pocApp" startPc="268436659">
+            <param id="state"/>
+            <documentation/>
+        </functionEntry>
+        <functionEntry accessMode="public" endPc="268436769" name="buildPendingPayload" parent="ora_wearable_pocApp" startPc="268436662">
+            <documentation/>
+        </functionEntry>
+        <functionEntry accessMode="public" endPc="268436790" name="initialize" parent="ora_wearable_pocApp" startPc="268436770">
+            <documentation/>
+        </functionEntry>
+        <functionEntry accessMode="public" endPc="268436793" name="onStop" parent="ora_wearable_pocApp" startPc="268436791">
+            <param id="state"/>
+            <documentation/>
+        </functionEntry>
+    </functions>
+</debugInfo>

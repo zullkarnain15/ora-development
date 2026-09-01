@@ -1,0 +1,399 @@
+[ @file = "D:\ORA-Development\ora_garmin\ora_wearable_poc\source\ora_wearable_pocView.mc"; @line = 1; @symbol_importdef<0> = [Toybox,1,7,13]; @symbol_importdef<1> = [Activity,1,14,22]; ]
+import Toybox.Activity;
+[ @file = "D:\ORA-Development\ora_garmin\ora_wearable_poc\source\ora_wearable_pocView.mc"; @line = 2; @symbol_importdef<0> = [Toybox,2,7,13]; @symbol_importdef<1> = [Application,2,14,25]; ]
+import Toybox.Application;
+[ @file = "D:\ORA-Development\ora_garmin\ora_wearable_poc\source\ora_wearable_pocView.mc"; @line = 3; @symbol_importdef<0> = [Toybox,3,7,13]; @symbol_importdef<1> = [Lang,3,14,18]; ]
+import Toybox.Lang;
+[ @file = "D:\ORA-Development\ora_garmin\ora_wearable_poc\source\ora_wearable_pocView.mc"; @line = 4; @symbol_importdef<0> = [Toybox,4,7,13]; @symbol_importdef<1> = [System,4,14,20]; ]
+import Toybox.System;
+[ @file = "D:\ORA-Development\ora_garmin\ora_wearable_poc\source\ora_wearable_pocView.mc"; @line = 5; @symbol_importdef<0> = [Toybox,5,7,13]; @symbol_importdef<1> = [Time,5,14,18]; ]
+import Toybox.Time;
+[ @file = "D:\ORA-Development\ora_garmin\ora_wearable_poc\source\ora_wearable_pocView.mc"; @line = 6; @symbol_importdef<0> = [Toybox,6,7,13]; @symbol_importdef<1> = [WatchUi,6,14,21]; ]
+import Toybox.WatchUi;
+[ @file = "D:\ORA-Development\ora_garmin\ora_wearable_poc\source\ora_wearable_pocView.mc"; @line = 8; @symbol_classdef = [ora_wearable_pocView,8,6,26]; @symbol_extends<0> = [WatchUi,8,35,42]; @symbol_extends<1> = [SimpleDataField,8,43,58]; ]
+class ora_wearable_pocView extends WatchUi.SimpleDataField {
+    [ @file = "D:\ORA-Development\ora_garmin\ora_wearable_poc\source\ora_wearable_pocView.mc"; @line = 8; ]
+    <init> {
+    }
+    [ @file = "D:\ORA-Development\ora_garmin\ora_wearable_poc\source\ora_wearable_pocView.mc"; @line = 8; ]
+    static
+    <init> {
+    }
+    [ @file = "D:\ORA-Development\ora_garmin\ora_wearable_poc\source\ora_wearable_pocView.mc"; @line = 10; @symbol_functiondef = [initialize,10,13,23]; ]
+    function initialize() as Void {
+D__ORA_Development_ora_garmin_ora_wearable_poc_source_ora_wearable_pocView_mc_10_26_13_4_start:
+[ "D:\ORA-Development\ora_garmin\ora_wearable_poc\source\ora_wearable_pocView.mc" 11 8 ]
+        symbol [ SimpleDataField %tmp.2 11 8 23 ];
+        %tmp.2 = getv ? :SimpleDataField;
+        symbol [ initialize %tmp.3 11 24 34 ];
+        %tmp.3 = getv function %tmp.2 :initialize;
+        invoke %tmp.2 %tmp.3();
+[ "D:\ORA-Development\ora_garmin\ora_wearable_poc\source\ora_wearable_pocView.mc" 12 8 ]
+        %tmp.4 = "ORA";
+        symbol [ label ? 12 8 13 ];
+        putv self :label %tmp.4;
+D__ORA_Development_ora_garmin_ora_wearable_poc_source_ora_wearable_pocView_mc_10_26_13_4_stop:
+    }
+    [ @file = "D:\ORA-Development\ora_garmin\ora_wearable_poc\source\ora_wearable_pocView.mc"; @line = 15; @symbol_functiondef = [compute,15,13,20]; @symbol_param<0> = [info,15,21,25]; @symbol_param<0>_type<0> = [Activity,15,29,37]; @symbol_param<0>_type<1> = [Info,15,38,42]; @symbol_return<0> = [Numeric,15,47,54]; @symbol_return<1> = [Duration,15,58,66]; @symbol_return<2> = [String,15,70,76]; ]
+    function compute(info as Activity.Info) as Numeric or Duration or String or Null {
+D__ORA_Development_ora_garmin_ora_wearable_poc_source_ora_wearable_pocView_mc_15_85_54_4_start:
+[ "D:\ORA-Development\ora_garmin\ora_wearable_poc\source\ora_wearable_pocView.mc" 17 8 ]
+        [ "D__ORA_Development_ora_garmin_ora_wearable_poc_source_ora_wearable_pocView_mc_15_85_54_4_start" "D__ORA_Development_ora_garmin_ora_wearable_poc_source_ora_wearable_pocView_mc_15_85_54_4_stop" ]
+        %startSeconds.1 = local;
+        symbol [ startSeconds %startSeconds.1 17 12 24 ];
+        %tmp.1 = 0;
+        lputv %startSeconds.1 %tmp.1;
+        symbol [ startSeconds %startSeconds.1 17 12 24 ];
+[ "D:\ORA-Development\ora_garmin\ora_wearable_poc\source\ora_wearable_pocView.mc" 18 8 ]
+        [ "D__ORA_Development_ora_garmin_ora_wearable_poc_source_ora_wearable_pocView_mc_15_85_54_4_start" "D__ORA_Development_ora_garmin_ora_wearable_poc_source_ora_wearable_pocView_mc_15_85_54_4_stop" ]
+        %distanceMeters.2 = local;
+        symbol [ distanceMeters %distanceMeters.2 18 12 26 ];
+        %tmp.2 = 0;
+        lputv %distanceMeters.2 %tmp.2;
+        symbol [ distanceMeters %distanceMeters.2 18 12 26 ];
+[ "D:\ORA-Development\ora_garmin\ora_wearable_poc\source\ora_wearable_pocView.mc" 19 8 ]
+        [ "D__ORA_Development_ora_garmin_ora_wearable_poc_source_ora_wearable_pocView_mc_15_85_54_4_start" "D__ORA_Development_ora_garmin_ora_wearable_poc_source_ora_wearable_pocView_mc_15_85_54_4_stop" ]
+        %durationSeconds.3 = local;
+        symbol [ durationSeconds %durationSeconds.3 19 12 27 ];
+        %tmp.3 = 0;
+        lputv %durationSeconds.3 %tmp.3;
+        symbol [ durationSeconds %durationSeconds.3 19 12 27 ];
+[ "D:\ORA-Development\ora_garmin\ora_wearable_poc\source\ora_wearable_pocView.mc" 21 8 ]
+        [ "D__ORA_Development_ora_garmin_ora_wearable_poc_source_ora_wearable_pocView_mc_15_85_54_4_start" "D__ORA_Development_ora_garmin_ora_wearable_poc_source_ora_wearable_pocView_mc_15_85_54_4_stop" ]
+        %startTime.4 = local;
+        symbol [ startTime %startTime.4 21 12 21 ];
+        %tmp.4 = lgetv %info;
+        symbol [ info %tmp.4 21 24 28 ];
+        symbol [ startTime %tmp.5 21 29 38 ];
+        %tmp.5 = getv %tmp.4 :startTime;
+        lputv %startTime.4 %tmp.5;
+        symbol [ startTime %startTime.4 21 12 21 ];
+[ "D:\ORA-Development\ora_garmin\ora_wearable_poc\source\ora_wearable_pocView.mc" 22 8 ]
+D__ORA_Development_ora_garmin_ora_wearable_poc_source_ora_wearable_pocView_mc_22_8_24_8_if_stmt:
+        %tmp.6 = lgetv %startTime.4;
+        symbol [ startTime %tmp.6 22 12 21 ];
+        %tmp.7 = null;
+        %tmp.8 = ne %tmp.6 %tmp.7;
+        bf %tmp.8 @D__ORA_Development_ora_garmin_ora_wearable_poc_source_ora_wearable_pocView_mc_22_8_24_8_if_end;
+D__ORA_Development_ora_garmin_ora_wearable_poc_source_ora_wearable_pocView_mc_22_8_24_8_if_true:
+D__ORA_Development_ora_garmin_ora_wearable_poc_source_ora_wearable_pocView_mc_22_31_24_8_start:
+[ "D:\ORA-Development\ora_garmin\ora_wearable_poc\source\ora_wearable_pocView.mc" 23 12 ]
+        %tmp.9 = lgetv %startTime.4;
+        symbol [ startTime %tmp.9 23 27 36 ];
+        %tmp.10 = as %tmp.9 { (!Null) };
+        symbol [ value %tmp.11 23 37 42 ];
+        %tmp.11 = getv function %tmp.10 :value;
+        %tmp.12 = invoke %tmp.10 %tmp.11();
+        lputv %startSeconds.1 %tmp.12;
+        symbol [ startSeconds %startSeconds.1 23 12 24 ];
+D__ORA_Development_ora_garmin_ora_wearable_poc_source_ora_wearable_pocView_mc_22_31_24_8_stop:
+        goto @D__ORA_Development_ora_garmin_ora_wearable_poc_source_ora_wearable_pocView_mc_22_8_24_8_if_end;
+D__ORA_Development_ora_garmin_ora_wearable_poc_source_ora_wearable_pocView_mc_22_8_24_8_if_end:
+[ "D:\ORA-Development\ora_garmin\ora_wearable_poc\source\ora_wearable_pocView.mc" 26 8 ]
+        [ "D__ORA_Development_ora_garmin_ora_wearable_poc_source_ora_wearable_pocView_mc_15_85_54_4_start" "D__ORA_Development_ora_garmin_ora_wearable_poc_source_ora_wearable_pocView_mc_15_85_54_4_stop" ]
+        %elapsedDistance.5 = local;
+        symbol [ elapsedDistance %elapsedDistance.5 26 12 27 ];
+        %tmp.13 = lgetv %info;
+        symbol [ info %tmp.13 26 30 34 ];
+        symbol [ elapsedDistance %tmp.14 26 35 50 ];
+        %tmp.14 = getv %tmp.13 :elapsedDistance;
+        lputv %elapsedDistance.5 %tmp.14;
+        symbol [ elapsedDistance %elapsedDistance.5 26 12 27 ];
+[ "D:\ORA-Development\ora_garmin\ora_wearable_poc\source\ora_wearable_pocView.mc" 27 8 ]
+D__ORA_Development_ora_garmin_ora_wearable_poc_source_ora_wearable_pocView_mc_27_8_29_8_if_stmt:
+        %tmp.15 = lgetv %elapsedDistance.5;
+        symbol [ elapsedDistance %tmp.15 27 12 27 ];
+        %tmp.16 = null;
+        %tmp.17 = ne %tmp.15 %tmp.16;
+        bf %tmp.17 @D__ORA_Development_ora_garmin_ora_wearable_poc_source_ora_wearable_pocView_mc_27_8_29_8_if_end;
+D__ORA_Development_ora_garmin_ora_wearable_poc_source_ora_wearable_pocView_mc_27_8_29_8_if_true:
+D__ORA_Development_ora_garmin_ora_wearable_poc_source_ora_wearable_pocView_mc_27_37_29_8_start:
+[ "D:\ORA-Development\ora_garmin\ora_wearable_poc\source\ora_wearable_pocView.mc" 28 12 ]
+        %tmp.18 = lgetv %elapsedDistance.5;
+        symbol [ elapsedDistance %tmp.18 28 29 44 ];
+        %tmp.19 = as %tmp.18 { (!Null) };
+        symbol [ toNumber %tmp.20 28 45 53 ];
+        %tmp.20 = getv function %tmp.19 :toNumber;
+        %tmp.21 = invoke %tmp.19 %tmp.20();
+        lputv %distanceMeters.2 %tmp.21;
+        symbol [ distanceMeters %distanceMeters.2 28 12 26 ];
+D__ORA_Development_ora_garmin_ora_wearable_poc_source_ora_wearable_pocView_mc_27_37_29_8_stop:
+        goto @D__ORA_Development_ora_garmin_ora_wearable_poc_source_ora_wearable_pocView_mc_27_8_29_8_if_end;
+D__ORA_Development_ora_garmin_ora_wearable_poc_source_ora_wearable_pocView_mc_27_8_29_8_if_end:
+[ "D:\ORA-Development\ora_garmin\ora_wearable_poc\source\ora_wearable_pocView.mc" 31 8 ]
+        [ "D__ORA_Development_ora_garmin_ora_wearable_poc_source_ora_wearable_pocView_mc_15_85_54_4_start" "D__ORA_Development_ora_garmin_ora_wearable_poc_source_ora_wearable_pocView_mc_15_85_54_4_stop" ]
+        %timerTime.6 = local;
+        symbol [ timerTime %timerTime.6 31 12 21 ];
+        %tmp.22 = lgetv %info;
+        symbol [ info %tmp.22 31 24 28 ];
+        symbol [ timerTime %tmp.23 31 29 38 ];
+        %tmp.23 = getv %tmp.22 :timerTime;
+        lputv %timerTime.6 %tmp.23;
+        symbol [ timerTime %timerTime.6 31 12 21 ];
+[ "D:\ORA-Development\ora_garmin\ora_wearable_poc\source\ora_wearable_pocView.mc" 32 8 ]
+D__ORA_Development_ora_garmin_ora_wearable_poc_source_ora_wearable_pocView_mc_32_8_34_8_if_stmt:
+        %tmp.24 = lgetv %timerTime.6;
+        symbol [ timerTime %tmp.24 32 12 21 ];
+        %tmp.25 = null;
+        %tmp.26 = ne %tmp.24 %tmp.25;
+        bf %tmp.26 @D__ORA_Development_ora_garmin_ora_wearable_poc_source_ora_wearable_pocView_mc_32_8_34_8_if_end;
+D__ORA_Development_ora_garmin_ora_wearable_poc_source_ora_wearable_pocView_mc_32_8_34_8_if_true:
+D__ORA_Development_ora_garmin_ora_wearable_poc_source_ora_wearable_pocView_mc_32_31_34_8_start:
+[ "D:\ORA-Development\ora_garmin\ora_wearable_poc\source\ora_wearable_pocView.mc" 33 12 ]
+        %tmp.27 = lgetv %timerTime.6;
+        symbol [ timerTime %tmp.27 33 31 40 ];
+        %tmp.28 = as %tmp.27 { (!Null) };
+        %tmp.29 = 1000;
+        %tmp.30 = div %tmp.28 %tmp.29;
+        symbol [ toNumber %tmp.31 33 49 57 ];
+        %tmp.31 = getv function %tmp.30 :toNumber;
+        %tmp.32 = invoke %tmp.30 %tmp.31();
+        lputv %durationSeconds.3 %tmp.32;
+        symbol [ durationSeconds %durationSeconds.3 33 12 27 ];
+D__ORA_Development_ora_garmin_ora_wearable_poc_source_ora_wearable_pocView_mc_32_31_34_8_stop:
+        goto @D__ORA_Development_ora_garmin_ora_wearable_poc_source_ora_wearable_pocView_mc_32_8_34_8_if_end;
+D__ORA_Development_ora_garmin_ora_wearable_poc_source_ora_wearable_pocView_mc_32_8_34_8_if_end:
+[ "D:\ORA-Development\ora_garmin\ora_wearable_poc\source\ora_wearable_pocView.mc" 38 8 ]
+D__ORA_Development_ora_garmin_ora_wearable_poc_source_ora_wearable_pocView_mc_38_8_40_8_if_stmt:
+        %tmp.33 = lgetv %startSeconds.1;
+        symbol [ startSeconds %tmp.33 38 12 24 ];
+        %tmp.34 = 0;
+        %tmp.35 = gt %tmp.33 %tmp.34;
+        bf %tmp.35 @D__ORA_Development_ora_garmin_ora_wearable_poc_source_ora_wearable_pocView_mc_38_8_40_8_if_end;
+D__ORA_Development_ora_garmin_ora_wearable_poc_source_ora_wearable_pocView_mc_38_8_40_8_if_true:
+D__ORA_Development_ora_garmin_ora_wearable_poc_source_ora_wearable_pocView_mc_38_30_40_8_start:
+[ "D:\ORA-Development\ora_garmin\ora_wearable_poc\source\ora_wearable_pocView.mc" 39 12 ]
+        symbol [ Application %tmp.36 39 13 24 ];
+        %tmp.36 = getm $.Toybox.Application;
+        symbol [ getApp %tmp.37 39 25 31 ];
+        %tmp.37 = getv function %tmp.36 :getApp;
+        %tmp.38 = invoke %tmp.36 %tmp.37();
+        %tmp.39 = as %tmp.38 ora_wearable_pocApp;
+        symbol [ ora_wearable_pocApp %tmp.39 39 37 56 ];
+        symbol [ updateActivitySnapshot %tmp.40 39 58 80 ];
+        %tmp.40 = getv function %tmp.39 :updateActivitySnapshot;
+        %tmp.41 = lgetv %startSeconds.1;
+        symbol [ startSeconds %tmp.41 39 81 93 ];
+        %tmp.42 = lgetv %distanceMeters.2;
+        symbol [ distanceMeters %tmp.42 39 95 109 ];
+        %tmp.43 = lgetv %durationSeconds.3;
+        symbol [ durationSeconds %tmp.43 39 111 126 ];
+        invoke %tmp.39 %tmp.40(%tmp.41, %tmp.42, %tmp.43);
+D__ORA_Development_ora_garmin_ora_wearable_poc_source_ora_wearable_pocView_mc_38_30_40_8_stop:
+        goto @D__ORA_Development_ora_garmin_ora_wearable_poc_source_ora_wearable_pocView_mc_38_8_40_8_if_end;
+D__ORA_Development_ora_garmin_ora_wearable_poc_source_ora_wearable_pocView_mc_38_8_40_8_if_end:
+[ "D:\ORA-Development\ora_garmin\ora_wearable_poc\source\ora_wearable_pocView.mc" 42 8 ]
+        [ "D__ORA_Development_ora_garmin_ora_wearable_poc_source_ora_wearable_pocView_mc_15_85_54_4_start" "D__ORA_Development_ora_garmin_ora_wearable_poc_source_ora_wearable_pocView_mc_15_85_54_4_stop" ]
+        %distanceKm.7 = local;
+        symbol [ distanceKm %distanceKm.7 42 12 22 ];
+        %tmp.44 = lgetv %distanceMeters.2;
+        symbol [ distanceMeters %tmp.44 42 25 39 ];
+        %tmp.45 = 1000.0;
+        %tmp.46 = div %tmp.44 %tmp.45;
+        lputv %distanceKm.7 %tmp.46;
+        symbol [ distanceKm %distanceKm.7 42 12 22 ];
+[ "D:\ORA-Development\ora_garmin\ora_wearable_poc\source\ora_wearable_pocView.mc" 44 8 ]
+        [ "D__ORA_Development_ora_garmin_ora_wearable_poc_source_ora_wearable_pocView_mc_15_85_54_4_start" "D__ORA_Development_ora_garmin_ora_wearable_poc_source_ora_wearable_pocView_mc_15_85_54_4_stop" ]
+        %hours.8 = local;
+        symbol [ hours %hours.8 44 12 17 ];
+        %tmp.47 = lgetv %durationSeconds.3;
+        symbol [ durationSeconds %tmp.47 44 21 36 ];
+        %tmp.48 = 3600;
+        %tmp.49 = div %tmp.47 %tmp.48;
+        symbol [ toNumber %tmp.50 44 45 53 ];
+        %tmp.50 = getv function %tmp.49 :toNumber;
+        %tmp.51 = invoke %tmp.49 %tmp.50();
+        lputv %hours.8 %tmp.51;
+        symbol [ hours %hours.8 44 12 17 ];
+[ "D:\ORA-Development\ora_garmin\ora_wearable_poc\source\ora_wearable_pocView.mc" 45 8 ]
+        [ "D__ORA_Development_ora_garmin_ora_wearable_poc_source_ora_wearable_pocView_mc_15_85_54_4_start" "D__ORA_Development_ora_garmin_ora_wearable_poc_source_ora_wearable_pocView_mc_15_85_54_4_stop" ]
+        %minutes.9 = local;
+        symbol [ minutes %minutes.9 45 12 19 ];
+        %tmp.52 = lgetv %durationSeconds.3;
+        symbol [ durationSeconds %tmp.52 45 24 39 ];
+        %tmp.53 = 3600;
+        %tmp.54 = mod %tmp.52 %tmp.53;
+        %tmp.55 = 60;
+        %tmp.56 = div %tmp.54 %tmp.55;
+        symbol [ toNumber %tmp.57 45 54 62 ];
+        %tmp.57 = getv function %tmp.56 :toNumber;
+        %tmp.58 = invoke %tmp.56 %tmp.57();
+        lputv %minutes.9 %tmp.58;
+        symbol [ minutes %minutes.9 45 12 19 ];
+[ "D:\ORA-Development\ora_garmin\ora_wearable_poc\source\ora_wearable_pocView.mc" 46 8 ]
+        [ "D__ORA_Development_ora_garmin_ora_wearable_poc_source_ora_wearable_pocView_mc_15_85_54_4_start" "D__ORA_Development_ora_garmin_ora_wearable_poc_source_ora_wearable_pocView_mc_15_85_54_4_stop" ]
+        %seconds.10 = local;
+        symbol [ seconds %seconds.10 46 12 19 ];
+        %tmp.59 = lgetv %durationSeconds.3;
+        symbol [ durationSeconds %tmp.59 46 23 38 ];
+        %tmp.60 = 60;
+        %tmp.61 = mod %tmp.59 %tmp.60;
+        symbol [ toNumber %tmp.62 46 45 53 ];
+        %tmp.62 = getv function %tmp.61 :toNumber;
+        %tmp.63 = invoke %tmp.61 %tmp.62();
+        lputv %seconds.10 %tmp.63;
+        symbol [ seconds %seconds.10 46 12 19 ];
+[ "D:\ORA-Development\ora_garmin\ora_wearable_poc\source\ora_wearable_pocView.mc" 48 8 ]
+        [ "D__ORA_Development_ora_garmin_ora_wearable_poc_source_ora_wearable_pocView_mc_15_85_54_4_start" "D__ORA_Development_ora_garmin_ora_wearable_poc_source_ora_wearable_pocView_mc_15_85_54_4_stop" ]
+        %timeText.11 = local;
+        symbol [ timeText %timeText.11 48 12 20 ];
+        %tmp.64 = self;
+        symbol [ pad2 %tmp.65 49 12 16 ];
+        %tmp.65 = getv function %tmp.64 :pad2;
+        %tmp.66 = lgetv %hours.8;
+        symbol [ hours %tmp.66 49 17 22 ];
+        %tmp.67 = invoke %tmp.64 %tmp.65(%tmp.66);
+        %tmp.68 = ":";
+        %tmp.69 = add %tmp.67 %tmp.68;
+        %tmp.70 = self;
+        symbol [ pad2 %tmp.71 50 12 16 ];
+        %tmp.71 = getv function %tmp.70 :pad2;
+        %tmp.72 = lgetv %minutes.9;
+        symbol [ minutes %tmp.72 50 17 24 ];
+        %tmp.73 = invoke %tmp.70 %tmp.71(%tmp.72);
+        %tmp.74 = add %tmp.69 %tmp.73;
+        %tmp.75 = ":";
+        %tmp.76 = add %tmp.74 %tmp.75;
+        %tmp.77 = self;
+        symbol [ pad2 %tmp.78 51 12 16 ];
+        %tmp.78 = getv function %tmp.77 :pad2;
+        %tmp.79 = lgetv %seconds.10;
+        symbol [ seconds %tmp.79 51 17 24 ];
+        %tmp.80 = invoke %tmp.77 %tmp.78(%tmp.79);
+        %tmp.81 = add %tmp.76 %tmp.80;
+        lputv %timeText.11 %tmp.81;
+        symbol [ timeText %timeText.11 48 12 20 ];
+[ "D:\ORA-Development\ora_garmin\ora_wearable_poc\source\ora_wearable_pocView.mc" 53 8 ]
+        %tmp.82 = lgetv %distanceKm.7;
+        symbol [ distanceKm %tmp.82 53 15 25 ];
+        symbol [ format %tmp.83 53 26 32 ];
+        %tmp.83 = getv function %tmp.82 :format;
+        %tmp.84 = "%.2f";
+        %tmp.85 = invoke %tmp.82 %tmp.83(%tmp.84);
+        %tmp.86 = " KM ";
+        %tmp.87 = add %tmp.85 %tmp.86;
+        %tmp.88 = lgetv %timeText.11;
+        symbol [ timeText %tmp.88 53 52 60 ];
+        %tmp.89 = add %tmp.87 %tmp.88;
+        ret %tmp.89;
+D__ORA_Development_ora_garmin_ora_wearable_poc_source_ora_wearable_pocView_mc_15_85_54_4_stop:
+    }
+    [ @file = "D:\ORA-Development\ora_garmin\ora_wearable_poc\source\ora_wearable_pocView.mc"; @line = 56; @symbol_functiondef = [onTimerStart,56,13,25]; ]
+    function onTimerStart() as Void {
+D__ORA_Development_ora_garmin_ora_wearable_poc_source_ora_wearable_pocView_mc_56_36_59_4_start:
+[ "D:\ORA-Development\ora_garmin\ora_wearable_poc\source\ora_wearable_pocView.mc" 57 8 ]
+        symbol [ Application %tmp.1 57 9 20 ];
+        %tmp.1 = getm $.Toybox.Application;
+        symbol [ getApp %tmp.2 57 21 27 ];
+        %tmp.2 = getv function %tmp.1 :getApp;
+        %tmp.3 = invoke %tmp.1 %tmp.2();
+        %tmp.4 = as %tmp.3 ora_wearable_pocApp;
+        symbol [ ora_wearable_pocApp %tmp.4 57 33 52 ];
+        symbol [ beginActivity %tmp.5 57 54 67 ];
+        %tmp.5 = getv function %tmp.4 :beginActivity;
+        invoke %tmp.4 %tmp.5();
+[ "D:\ORA-Development\ora_garmin\ora_wearable_poc\source\ora_wearable_pocView.mc" 58 8 ]
+        symbol [ System %tmp.6 58 8 14 ];
+        %tmp.6 = getm $.Toybox.System;
+        symbol [ println %tmp.7 58 15 22 ];
+        %tmp.7 = getv function %tmp.6 :println;
+        %tmp.8 = "ORA_TIMER_START";
+        invoke %tmp.6 %tmp.7(%tmp.8);
+D__ORA_Development_ora_garmin_ora_wearable_poc_source_ora_wearable_pocView_mc_56_36_59_4_stop:
+    }
+    [ @file = "D:\ORA-Development\ora_garmin\ora_wearable_poc\source\ora_wearable_pocView.mc"; @line = 63; @symbol_functiondef = [onTimerStop,63,13,24]; ]
+    function onTimerStop() as Void {
+D__ORA_Development_ora_garmin_ora_wearable_poc_source_ora_wearable_pocView_mc_63_35_65_4_start:
+[ "D:\ORA-Development\ora_garmin\ora_wearable_poc\source\ora_wearable_pocView.mc" 64 8 ]
+        symbol [ System %tmp.1 64 8 14 ];
+        %tmp.1 = getm $.Toybox.System;
+        symbol [ println %tmp.2 64 15 22 ];
+        %tmp.2 = getv function %tmp.1 :println;
+        %tmp.3 = "ORA_TIMER_STOP";
+        invoke %tmp.1 %tmp.2(%tmp.3);
+D__ORA_Development_ora_garmin_ora_wearable_poc_source_ora_wearable_pocView_mc_63_35_65_4_stop:
+    }
+    [ @file = "D:\ORA-Development\ora_garmin\ora_wearable_poc\source\ora_wearable_pocView.mc"; @line = 67; @symbol_functiondef = [onTimerPause,67,13,25]; ]
+    function onTimerPause() as Void {
+D__ORA_Development_ora_garmin_ora_wearable_poc_source_ora_wearable_pocView_mc_67_36_69_4_start:
+[ "D:\ORA-Development\ora_garmin\ora_wearable_poc\source\ora_wearable_pocView.mc" 68 8 ]
+        symbol [ System %tmp.1 68 8 14 ];
+        %tmp.1 = getm $.Toybox.System;
+        symbol [ println %tmp.2 68 15 22 ];
+        %tmp.2 = getv function %tmp.1 :println;
+        %tmp.3 = "ORA_TIMER_PAUSE";
+        invoke %tmp.1 %tmp.2(%tmp.3);
+D__ORA_Development_ora_garmin_ora_wearable_poc_source_ora_wearable_pocView_mc_67_36_69_4_stop:
+    }
+    [ @file = "D:\ORA-Development\ora_garmin\ora_wearable_poc\source\ora_wearable_pocView.mc"; @line = 71; @symbol_functiondef = [onTimerResume,71,13,26]; ]
+    function onTimerResume() as Void {
+D__ORA_Development_ora_garmin_ora_wearable_poc_source_ora_wearable_pocView_mc_71_37_73_4_start:
+[ "D:\ORA-Development\ora_garmin\ora_wearable_poc\source\ora_wearable_pocView.mc" 72 8 ]
+        symbol [ System %tmp.1 72 8 14 ];
+        %tmp.1 = getm $.Toybox.System;
+        symbol [ println %tmp.2 72 15 22 ];
+        %tmp.2 = getv function %tmp.1 :println;
+        %tmp.3 = "ORA_TIMER_RESUME";
+        invoke %tmp.1 %tmp.2(%tmp.3);
+D__ORA_Development_ora_garmin_ora_wearable_poc_source_ora_wearable_pocView_mc_71_37_73_4_stop:
+    }
+    [ @file = "D:\ORA-Development\ora_garmin\ora_wearable_poc\source\ora_wearable_pocView.mc"; @line = 75; @symbol_functiondef = [onTimerReset,75,13,25]; ]
+    function onTimerReset() as Void {
+D__ORA_Development_ora_garmin_ora_wearable_poc_source_ora_wearable_pocView_mc_75_36_78_4_start:
+[ "D:\ORA-Development\ora_garmin\ora_wearable_poc\source\ora_wearable_pocView.mc" 76 8 ]
+        symbol [ System %tmp.1 76 8 14 ];
+        %tmp.1 = getm $.Toybox.System;
+        symbol [ println %tmp.2 76 15 22 ];
+        %tmp.2 = getv function %tmp.1 :println;
+        %tmp.3 = "ORA_TIMER_RESET";
+        invoke %tmp.1 %tmp.2(%tmp.3);
+[ "D:\ORA-Development\ora_garmin\ora_wearable_poc\source\ora_wearable_pocView.mc" 77 8 ]
+        symbol [ Application %tmp.4 77 9 20 ];
+        %tmp.4 = getm $.Toybox.Application;
+        symbol [ getApp %tmp.5 77 21 27 ];
+        %tmp.5 = getv function %tmp.4 :getApp;
+        %tmp.6 = invoke %tmp.4 %tmp.5();
+        %tmp.7 = as %tmp.6 ora_wearable_pocApp;
+        symbol [ ora_wearable_pocApp %tmp.7 77 33 52 ];
+        symbol [ logFinalSnapshot %tmp.8 77 54 70 ];
+        %tmp.8 = getv function %tmp.7 :logFinalSnapshot;
+        invoke %tmp.7 %tmp.8();
+D__ORA_Development_ora_garmin_ora_wearable_poc_source_ora_wearable_pocView_mc_75_36_78_4_stop:
+    }
+    [ @file = "D:\ORA-Development\ora_garmin\ora_wearable_poc\source\ora_wearable_pocView.mc"; @line = 80; @symbol_functiondef = [pad2,80,13,17]; @symbol_param<0> = [value,80,18,23]; @symbol_param<0>_type<0> = [Number,80,27,33]; @symbol_return<0> = [String,80,38,44]; ]
+    function pad2(value as Number) as String {
+D__ORA_Development_ora_garmin_ora_wearable_poc_source_ora_wearable_pocView_mc_80_45_86_4_start:
+[ "D:\ORA-Development\ora_garmin\ora_wearable_poc\source\ora_wearable_pocView.mc" 81 8 ]
+D__ORA_Development_ora_garmin_ora_wearable_poc_source_ora_wearable_pocView_mc_81_8_83_8_if_stmt:
+        %tmp.1 = lgetv %value;
+        symbol [ value %tmp.1 81 12 17 ];
+        %tmp.2 = 10;
+        %tmp.3 = lt %tmp.1 %tmp.2;
+        bf %tmp.3 @D__ORA_Development_ora_garmin_ora_wearable_poc_source_ora_wearable_pocView_mc_81_8_83_8_if_end;
+D__ORA_Development_ora_garmin_ora_wearable_poc_source_ora_wearable_pocView_mc_81_8_83_8_if_true:
+D__ORA_Development_ora_garmin_ora_wearable_poc_source_ora_wearable_pocView_mc_81_24_83_8_start:
+[ "D:\ORA-Development\ora_garmin\ora_wearable_poc\source\ora_wearable_pocView.mc" 82 12 ]
+        %tmp.4 = "0";
+        %tmp.5 = lgetv %value;
+        symbol [ value %tmp.5 82 25 30 ];
+        symbol [ toString %tmp.6 82 31 39 ];
+        %tmp.6 = getv function %tmp.5 :toString;
+        %tmp.7 = invoke %tmp.5 %tmp.6();
+        %tmp.8 = add %tmp.4 %tmp.7;
+        ret %tmp.8;
+D__ORA_Development_ora_garmin_ora_wearable_poc_source_ora_wearable_pocView_mc_81_24_83_8_stop:
+        goto @D__ORA_Development_ora_garmin_ora_wearable_poc_source_ora_wearable_pocView_mc_81_8_83_8_if_end;
+D__ORA_Development_ora_garmin_ora_wearable_poc_source_ora_wearable_pocView_mc_81_8_83_8_if_end:
+[ "D:\ORA-Development\ora_garmin\ora_wearable_poc\source\ora_wearable_pocView.mc" 85 8 ]
+        %tmp.9 = lgetv %value;
+        symbol [ value %tmp.9 85 15 20 ];
+        symbol [ toString %tmp.10 85 21 29 ];
+        %tmp.10 = getv function %tmp.9 :toString;
+        %tmp.11 = invoke %tmp.9 %tmp.10();
+        ret %tmp.11;
+D__ORA_Development_ora_garmin_ora_wearable_poc_source_ora_wearable_pocView_mc_80_45_86_4_stop:
+    }
+}
+[ @file = "D:\ORA-Development\ora_garmin\ora_wearable_poc\source\ora_wearable_pocView.mc"; @line = 1; ]
+<init> {
+}
