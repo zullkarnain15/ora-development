@@ -37,3 +37,6 @@ Thumbs.db
 
 # Workspace-only source assets
 ICON/
+
+# Local Garmin development workspace
+/ora_garmin/
