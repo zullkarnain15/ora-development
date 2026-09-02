@@ -13,6 +13,7 @@ import '../features/activity_import/application/activity_import_inbox.dart';
 import '../features/activity_import/data/activity_import_bridge_api.dart';
 import '../features/auth/data/session_store_factory.dart';
 import '../features/dashboard/application/feature_controller.dart';
+import '../features/dashboard/data/feature_cache_store_factory.dart';
 import '../features/dashboard/data/ora_feature_api.dart';
 import 'ora_app.dart';
 
@@ -41,6 +42,7 @@ void bootstrapOra() {
   final importInbox = ActivityImportInbox();
   final importBridgeApi = AppsScriptActivityImportBridgeApi(client);
   final ActivityStore activityStore = createActivityStore();
+  final featureCacheStore = createFeatureCacheStore();
   runApp(
     OraApp(
       authController: authController,
@@ -48,6 +50,7 @@ void bootstrapOra() {
         session: session,
         api: featureApi,
         activityStore: activityStore,
+        cacheStore: featureCacheStore,
       ),
       importInbox: importInbox,
       importBridgeApi: importBridgeApi,

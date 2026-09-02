@@ -46,6 +46,22 @@ class UserStats {
     lastActivityAt: json.string('lastActivityAt'),
     updatedAt: json.nullableString('updatedAt'),
   );
+
+  Map<String, Object?> toJson() => {
+    'nik': nik,
+    'nickname': nickname,
+    'division': division,
+    'totalActivities': totalActivities,
+    'totalDistanceKm': totalDistanceKm,
+    'totalDurationSec': totalDurationSec,
+    'totalXP': totalXp,
+    'currentLevel': currentLevel,
+    'currentLevelName': currentLevelName,
+    'nextLevelXP': nextLevelXp,
+    'lastActivityId': lastActivityId,
+    'lastActivityAt': lastActivityAt,
+    'updatedAt': updatedAt,
+  };
 }
 
 class OraLevel {
@@ -188,6 +204,27 @@ class Quest {
     claimId: json.nullableString('claimId'),
     claimedAt: json.nullableString('claimedAt'),
   );
+
+  Map<String, Object?> toJson() => {
+    'questId': questId,
+    'questName': questName,
+    'questType': questType,
+    'targetValue': targetValue,
+    'unit': unit,
+    'rewardXp': rewardXp,
+    'periodType': periodType,
+    'startDate': startDate,
+    'endDate': endDate,
+    'progress': progress,
+    'progressPercent': progressPercent,
+    'status': status,
+    'completed': completed,
+    'claimable': claimable,
+    'claimBlockedReason': claimBlockedReason,
+    'claimed': claimed,
+    'claimId': claimId,
+    'claimedAt': claimedAt,
+  };
 }
 
 class QuestClaim {
@@ -335,6 +372,21 @@ class GuildSummary {
     description: json.string('description'),
     status: json.string('status', fallback: 'ACTIVE'),
   );
+
+  Map<String, Object?> toJson() => {
+    'guildId': guildId,
+    'guildName': guildName,
+    'memberCount': memberCount,
+    'activeMemberCount': activeMemberCount,
+    'totalDistanceKm': totalDistanceKm,
+    'totalActivities': totalActivities,
+    'totalXP': totalXp,
+    'currentLevel': currentLevel,
+    'currentLevelName': currentLevelName,
+    'displayName': displayName,
+    'description': description,
+    'status': status,
+  };
 }
 
 class GuildMember {
@@ -367,6 +419,17 @@ class GuildMember {
     currentLevel: json.integer('currentLevel', fallback: 1),
     currentLevelName: json.string('currentLevelName'),
   );
+
+  Map<String, Object?> toJson() => {
+    'nik': nik,
+    'nickname': nickname,
+    'division': division,
+    'totalDistanceKm': totalDistanceKm,
+    'totalActivities': totalActivities,
+    'totalXP': totalXp,
+    'currentLevel': currentLevel,
+    'currentLevelName': currentLevelName,
+  };
 }
 
 class GuildData {
@@ -382,6 +445,36 @@ class GuildData {
   final List<GuildMember> members;
   final List<GuildSummary> directory;
   final LeaderboardData? leaderboard;
+
+  factory GuildData.fromJson(Map<String, Object?> json) {
+    final guild = json.object('guild');
+    final leaderboard = json.object('leaderboard');
+    return GuildData(
+      status: json.string('status', fallback: 'UNASSIGNED'),
+      guild: guild == null ? null : GuildSummary.fromJson(guild),
+      members: json
+          .objects('members')
+          .map(GuildMember.fromJson)
+          .toList(growable: false),
+      directory: json
+          .objects('directory')
+          .map(GuildSummary.fromJson)
+          .toList(growable: false),
+      leaderboard: leaderboard == null
+          ? null
+          : LeaderboardData.fromJson(leaderboard),
+    );
+  }
+
+  Map<String, Object?> toJson() => {
+    'status': status,
+    'guild': guild?.toJson(),
+    'members': members.map((value) => value.toJson()).toList(growable: false),
+    'directory': directory
+        .map((value) => value.toJson())
+        .toList(growable: false),
+    'leaderboard': leaderboard?.toJson(),
+  };
 }
 
 enum LeaderboardScope { global, guild }
@@ -439,12 +532,32 @@ class LeaderboardEntry {
         currentLevel: json.integer('currentLevel', fallback: 1),
         currentLevelName: json.string('currentLevelName'),
       );
+
+  Map<String, Object?> toJson() => {
+    'rank': rank,
+    'nik': nik,
+    'nickname': nickname,
+    'division': division,
+    'totalXP': totalXp,
+    'totalDistanceKm': totalDistanceKm,
+    'totalActivities': totalActivities,
+    'currentLevel': currentLevel,
+    'currentLevelName': currentLevelName,
+  };
 }
 
 class CurrentUserRank {
   const CurrentUserRank({required this.rank, required this.metricValue});
   final int rank;
   final double metricValue;
+
+  factory CurrentUserRank.fromJson(Map<String, Object?> json) =>
+      CurrentUserRank(
+        rank: json.integer('rank'),
+        metricValue: json.decimal('metricValue'),
+      );
+
+  Map<String, Object?> toJson() => {'rank': rank, 'metricValue': metricValue};
 }
 
 class LeaderboardData {
@@ -460,6 +573,38 @@ class LeaderboardData {
   final String status;
   final List<LeaderboardEntry> entries;
   final CurrentUserRank? currentUserRank;
+
+  factory LeaderboardData.fromJson(Map<String, Object?> json) {
+    final scope = json.string('scope') == 'GUILD'
+        ? LeaderboardScope.guild
+        : LeaderboardScope.global;
+    final metric = switch (json.string('metric')) {
+      'TOTAL_DISTANCE' => LeaderboardMetric.totalDistance,
+      'TOTAL_ACTIVITIES' => LeaderboardMetric.totalActivities,
+      _ => LeaderboardMetric.totalXp,
+    };
+    final rank = json.object('currentUserRank');
+    return LeaderboardData(
+      scope: scope,
+      metric: metric,
+      status: json.string('status', fallback: 'ACTIVE'),
+      entries: json
+          .objects('entries')
+          .asMap()
+          .entries
+          .map((entry) => LeaderboardEntry.fromJson(entry.value, entry.key))
+          .toList(growable: false),
+      currentUserRank: rank == null ? null : CurrentUserRank.fromJson(rank),
+    );
+  }
+
+  Map<String, Object?> toJson() => {
+    'scope': scope.apiValue,
+    'metric': metric.apiValue,
+    'status': status,
+    'entries': entries.map((value) => value.toJson()).toList(growable: false),
+    'currentUserRank': currentUserRank?.toJson(),
+  };
 }
 
 extension JsonValues on Map<String, Object?> {

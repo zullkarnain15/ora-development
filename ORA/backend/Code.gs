@@ -47,6 +47,11 @@ const ORA_RUNTIME_CACHE = {
   readHeavyData: {},
   readHeavyCacheStats: {},
   readHeavyGeneration: null,
+  readHeavyScopedGenerations: {},
+  questProgressData: {},
+  questProgressCacheStats: {},
+  questProgressGeneration: null,
+  questProgressScopedGenerations: {},
 };
 
 const ORA_CONFIG_DEFINITIONS = Object.freeze({
@@ -100,6 +105,16 @@ const ORA_MASTER_CACHE_DEFINITIONS = Object.freeze({
 const ORA_READ_HEAVY_CACHE = Object.freeze({
   prefix: 'ora_read_v1',
   generationKey: 'ora_read_v1_generation',
+  ttlSeconds: 60,
+  generationTtlSeconds: 21600,
+});
+
+// Quest progress is calculated from several high-cardinality sheets. Keep the
+// cached value member-scoped and short lived; mutation paths rotate the shared
+// generation so stale entries become unreachable immediately.
+const ORA_QUEST_PROGRESS_CACHE = Object.freeze({
+  prefix: 'ora_quest_progress_v1',
+  generationKey: 'ora_quest_progress_v1_generation',
   ttlSeconds: 60,
   generationTtlSeconds: 21600,
 });
@@ -364,6 +379,61 @@ function doPost(e) {
   }
 }
 
+/**
+ * Spreadsheet edits made outside the API do not pass through the write
+ * handlers. Invalidate affected master/read caches so Quest progress never
+ * waits for its 60-second TTL after an admin updates a dependency sheet.
+ */
+function onEdit(e) {
+  try {
+    const range = e && e.range;
+    const sheetName = range && range.getSheet ? range.getSheet().getName() : '';
+    if (shouldInvalidateAnyPerformanceCacheForSheet_(sheetName)) {
+      invalidateSheetSnapshot_(sheetName, getOnEditCacheInvalidationContext_(e, sheetName));
+    }
+  } catch (error) {
+    console.warn('[CACHE] action=on_edit_invalidate_failed');
+  }
+}
+
+function getOnEditCacheInvalidationContext_(event, sheetName) {
+  const range = event && event.range;
+  if (!range || range.getNumRows() !== 1 || range.getNumColumns() !== 1 || range.getRow() < 2) {
+    return null;
+  }
+  const sheet = range.getSheet();
+  const headerMap = createHeaderMap_(
+    sheet.getRange(1, 1, 1, Math.max(sheet.getLastColumn(), 1)).getDisplayValues()[0]
+  );
+  const row = sheet.getRange(range.getRow(), 1, 1, Math.max(sheet.getLastColumn(), 1))
+    .getDisplayValues()[0];
+  const header = String(sheet.getRange(1, range.getColumn()).getDisplayValue() || '').trim();
+  const value = function (name) {
+    return headerMap[name] == null ? '' : row[headerMap[name]];
+  };
+
+  if (sheetName === ORA_SHEETS.PARTICIPANTS) {
+    const nik = normalizeDigits_(value('NIK'));
+    const guilds = [value('Division_Guild')];
+    if (header === 'Division_Guild' && event.oldValue) guilds.push(event.oldValue);
+    if (header === 'Nickname') return { kind: 'nickname', nik: nik, guilds: guilds };
+    if (header === 'Division_Guild' || header === 'Status') {
+      return { kind: 'membership', nik: nik, guilds: guilds };
+    }
+    return { kind: 'nonProgress' };
+  }
+  if (sheetName === ORA_SHEETS.ACTIVITIES || sheetName === ORA_SHEETS.USER_STATS) {
+    return { kind: 'activity', nik: value('NIK'), guild: value('Division') || value('Division_Guild') };
+  }
+  if (sheetName === ORA_SHEETS.QUEST_CLAIMS || sheetName === ORA_SHEETS.ATTENDANCE_RECORDS) {
+    return { kind: 'xpOnly', nik: value('NIK') };
+  }
+  if (sheetName === ORA_SHEETS.GUILD_MASTER) {
+    return { kind: 'guildMaster', guilds: [value('GuildId'), value('GuildName')] };
+  }
+  return null;
+}
+
 function handleSyncStravaActivities_(request) {
   validateStravaSyncSecret_(request.secret);
   const activities = Array.isArray(request.activities) ? request.activities : [];
@@ -456,7 +526,12 @@ function handleSyncStravaActivities_(request) {
         if (previousValues[13]) updatedRow[13] = previousValues[13];
         sheet.getRange(rowNumber, 1, 1, ORA_HEADERS.Activities.length).setValues([updatedRow]);
       });
-      if (remaps.length > 0) invalidateSheetSnapshot_(ORA_SHEETS.ACTIVITIES);
+      if (remaps.length > 0) {
+        invalidateSheetSnapshot_(
+          ORA_SHEETS.ACTIVITIES,
+          getActivityCacheInvalidationContext_(statsEvents)
+        );
+      }
 
       if (rowsToAppend.length > 0) {
         appendStartRow = sheet.getLastRow() + 1;
@@ -466,7 +541,10 @@ function handleSyncStravaActivities_(request) {
           .getRange(appendStartRow, 1, rowsToAppend.length, ORA_HEADERS.Activities.length)
           .setValues(rowsToAppend);
         appendedRowsWritten = true;
-        invalidateSheetSnapshot_(ORA_SHEETS.ACTIVITIES);
+        invalidateSheetSnapshot_(
+          ORA_SHEETS.ACTIVITIES,
+          getActivityCacheInvalidationContext_(statsEvents)
+        );
       }
 
       applyStravaUserStatsBatch_(statsBatch);
@@ -474,14 +552,22 @@ function handleSyncStravaActivities_(request) {
       rollbackStravaUserStatsBatch_(statsBatch);
       if (appendedRowsWritten) {
         sheet.deleteRows(appendStartRow, rowsToAppend.length);
-        invalidateSheetSnapshot_(ORA_SHEETS.ACTIVITIES);
+        invalidateSheetSnapshot_(
+          ORA_SHEETS.ACTIVITIES,
+          getActivityCacheInvalidationContext_(statsEvents)
+        );
       }
       remapSnapshots.forEach(function (snapshot) {
         sheet
           .getRange(snapshot.rowNumber, 1, 1, ORA_HEADERS.Activities.length)
           .setValues([snapshot.previousValues]);
       });
-      if (remapSnapshots.length > 0) invalidateSheetSnapshot_(ORA_SHEETS.ACTIVITIES);
+      if (remapSnapshots.length > 0) {
+        invalidateSheetSnapshot_(
+          ORA_SHEETS.ACTIVITIES,
+          getActivityCacheInvalidationContext_(statsEvents)
+        );
+      }
       throw error;
     }
 
@@ -871,6 +957,7 @@ function prepareStravaUserStatsBatch_(statsEvents) {
       snapshots: [],
       appendStartRow: null,
       appendedRowsWritten: false,
+      cacheContext: { kind: 'activity', members: [], guilds: [] },
     };
   }
 
@@ -952,6 +1039,16 @@ function prepareStravaUserStatsBatch_(statsEvents) {
     snapshots: snapshots,
     appendStartRow: appendRows.length > 0 ? sheet.getLastRow() + 1 : null,
     appendedRowsWritten: false,
+    cacheContext: getActivityCacheInvalidationContext_(statsEvents),
+  };
+}
+
+function getActivityCacheInvalidationContext_(events) {
+  const participants = (events || []).map(function (event) { return event.participant || event; });
+  return {
+    kind: participants.length > 0 ? 'activity' : 'nonProgress',
+    members: participants.map(function (participant) { return participant.nik; }),
+    guilds: participants.map(function (participant) { return participant.divisionGuild || participant.division; }),
   };
 }
 
@@ -964,7 +1061,9 @@ function applyStravaUserStatsBatch_(batch) {
       .getRange(write.rowNumber, 1, 1, ORA_HEADERS.User_Stats.length)
       .setValues([write.values]);
   });
-  if (batch.existingWrites.length > 0) invalidateSheetSnapshot_(ORA_SHEETS.USER_STATS);
+  if (batch.existingWrites.length > 0) {
+    invalidateSheetSnapshot_(ORA_SHEETS.USER_STATS, batch.cacheContext);
+  }
 
   if (batch.appendRows.length > 0) {
     ensureOraSheetRowCapacity_(
@@ -983,7 +1082,7 @@ function applyStravaUserStatsBatch_(batch) {
       )
       .setValues(batch.appendRows);
     batch.appendedRowsWritten = true;
-    invalidateSheetSnapshot_(ORA_SHEETS.USER_STATS);
+    invalidateSheetSnapshot_(ORA_SHEETS.USER_STATS, batch.cacheContext);
   }
 }
 
@@ -1002,7 +1101,7 @@ function rollbackStravaUserStatsBatch_(batch) {
     console.error('Strava User_Stats rollback failed: %s', safeErrorMessage_(rollbackError));
   } finally {
     if (batch.snapshots.length > 0 || batch.appendedRowsWritten) {
-      invalidateSheetSnapshot_(ORA_SHEETS.USER_STATS);
+      invalidateSheetSnapshot_(ORA_SHEETS.USER_STATS, batch.cacheContext);
     }
   }
 }
@@ -1446,7 +1545,11 @@ function handleActivateNickname_(request) {
 
     sheet.getRange(participant.rowNumber, nicknameColumn).setValue(nickname);
     sheet.getRange(participant.rowNumber, updatedAtColumn).setValue(now);
-    invalidateSheetSnapshot_(ORA_SHEETS.PARTICIPANTS);
+    invalidateSheetSnapshot_(ORA_SHEETS.PARTICIPANTS, {
+      kind: 'nickname',
+      nik: participant.nik,
+      guild: participant.divisionGuild,
+    });
 
     participant.nickname = nickname;
     participant.updatedAt = now;
@@ -1504,7 +1607,11 @@ function handleUpdateNickname_(request) {
     const now = new Date();
     sheet.getRange(participant.rowNumber, participant.headerMap.Nickname + 1).setValue(nickname);
     sheet.getRange(participant.rowNumber, participant.headerMap.Updated_At + 1).setValue(now);
-    invalidateSheetSnapshot_(ORA_SHEETS.PARTICIPANTS);
+    invalidateSheetSnapshot_(ORA_SHEETS.PARTICIPANTS, {
+      kind: 'nickname',
+      nik: participant.nik,
+      guild: participant.divisionGuild,
+    });
     participant.nickname = nickname;
     participant.updatedAt = now;
 
@@ -1622,7 +1729,11 @@ function handleSubmitActivity_(request) {
     } catch (error) {
       // Keep submitActivity retryable if stats aggregation cannot be completed.
       sheet.deleteRow(activityRowNumber);
-      invalidateSheetSnapshot_(ORA_SHEETS.ACTIVITIES);
+      invalidateSheetSnapshot_(ORA_SHEETS.ACTIVITIES, {
+        kind: 'activity',
+        nik: participant.nik,
+        guild: participant.divisionGuild,
+      });
       throw error;
     }
 
@@ -1715,14 +1826,15 @@ function handleSubmitAttendance_(request) {
 
     try {
       statsWrite = grantAttendanceXp_(participant, totalXp);
-      const savedRecord = markAttendanceRecordSuccess_(recordsSheet, record.rowNumber);
+      const savedRecord = markAttendanceRecordSuccess_(recordsSheet, record.rowNumber, {
+        kind: 'attendance', nik: participant.nik,
+      });
       return jsonSuccess_(attendanceResponse_('SUCCESS', event, savedRecord, statsWrite.stats));
     } catch (error) {
       try {
         if (statsWrite) restoreUserStatsWrite_(statsWrite);
       } finally {
         recordsSheet.deleteRow(record.rowNumber);
-        invalidateSheetSnapshot_(ORA_SHEETS.ATTENDANCE_RECORDS);
       }
       throw error;
     }
@@ -1912,7 +2024,8 @@ function getCachedGuildSummaryPayload_(participant) {
         guild: summary.guild,
         members: summary.members,
       };
-    }
+    },
+    getGuildReadHeavyCacheScope_(division)
   );
 }
 
@@ -1972,7 +2085,7 @@ function getCachedLeaderboardPayload_(participant, scope, metric) {
       leaderboard: result.leaderboard,
       currentUserRank: result.currentUserRank,
     };
-  });
+  }, scope === 'GUILD' ? getGuildReadHeavyCacheScope_(division) : 'GLOBAL');
 }
 
 function getCachedGuildDataPayload_(participant, scope, metric) {
@@ -2114,24 +2227,26 @@ function handleGetQuestProgress_(request) {
     return jsonError_('ACCOUNT_INACTIVE', 'Akun ORA tidak aktif. Hubungi admin.');
   }
 
-  const participantRows = getGuildParticipantRows_();
-  const activityRows = readSheetObjects_(ORA_SHEETS.ACTIVITIES);
-  const activities = mapCompletedActivityRowsForNik_(activityRows, participant.nik);
-  const attendanceRecords = getAttendanceRecordsForNik_(participant.nik);
-  const guildContext = buildGuildActivityContext_(participant, participantRows, activityRows);
-  const userStats = getUserStatsByNik_(participant.nik);
-  const claimsByQuestId = getClaimedQuestsByNik_(participant.nik);
-  const questConfig = getActiveConfig_();
-  const quests = getActiveQuests_().map(function (quest) {
-    const progress = calculateQuestProgress_(
-      quest,
-      activities,
-      userStats,
-      guildContext,
-      questConfig,
-      attendanceRecords
-    );
-    return attachQuestClaim_(progress, claimsByQuestId[quest.questId] || null);
+  const quests = getCachedQuestProgressForParticipant_(participant, function () {
+    const participantRows = getGuildParticipantRows_();
+    const activityRows = readSheetObjects_(ORA_SHEETS.ACTIVITIES);
+    const activities = mapCompletedActivityRowsForNik_(activityRows, participant.nik);
+    const attendanceRecords = getAttendanceRecordsForNik_(participant.nik);
+    const guildContext = buildGuildActivityContext_(participant, participantRows, activityRows);
+    const userStats = getUserStatsByNik_(participant.nik);
+    const claimsByQuestId = getClaimedQuestsByNik_(participant.nik);
+    const questConfig = getActiveConfig_();
+    return getActiveQuests_().map(function (quest) {
+      const progress = calculateQuestProgress_(
+        quest,
+        activities,
+        userStats,
+        guildContext,
+        questConfig,
+        attendanceRecords
+      );
+      return attachQuestClaim_(progress, claimsByQuestId[quest.questId] || null);
+    });
   });
 
   return jsonQuestProgressSuccess_(quests);
@@ -2171,18 +2286,8 @@ function handleClaimQuestReward_(request) {
 
     const claimsSheet = ensureQuestClaimsSheet_();
     const existingClaim = findQuestClaim_(claimsSheet, participant.nik, questId);
-    if (existingClaim) {
-      if (existingClaim.status === 'CLAIMED') {
-        return jsonSuccess_({
-          status: 'ALREADY_CLAIMED',
-          claim: publicQuestClaim_(existingClaim),
-        });
-      }
-      throw oraError_(
-        'CLAIM_PENDING_REVIEW',
-        'Klaim sebelumnya belum selesai. Silakan coba lagi nanti.'
-      );
-    }
+    const existingClaimResponse = getExistingQuestClaimResponse_(existingClaim);
+    if (existingClaimResponse) return jsonSuccess_(existingClaimResponse);
 
     const activities = getCompletedActivitiesForNik_(participant.nik);
     const attendanceRecords = getAttendanceRecordsForNik_(participant.nik);
@@ -2220,8 +2325,10 @@ function handleClaimQuestReward_(request) {
     let statsWrite = null;
 
     try {
-      statsWrite = grantQuestRewardXp_(participant, rewardXp);
-      const claimed = markQuestClaimed_(claimsSheet, claim.rowNumber);
+      statsWrite = grantQuestRewardXp_(participant, rewardXp, 'questClaim');
+      const claimed = markQuestClaimed_(claimsSheet, claim.rowNumber, {
+        kind: 'questClaim', nik: participant.nik,
+      });
       return jsonSuccess_({
         status: 'CLAIMED',
         claim: publicQuestClaim_(claimed),
@@ -2232,7 +2339,6 @@ function handleClaimQuestReward_(request) {
         if (statsWrite) restoreUserStatsWrite_(statsWrite);
       } finally {
         claimsSheet.deleteRow(claim.rowNumber);
-        invalidateSheetSnapshot_(ORA_SHEETS.QUEST_CLAIMS);
       }
       throw error;
     }
@@ -2673,14 +2779,13 @@ function appendAttendanceRecord_(sheet, record) {
   ]];
   sheet.getRange(rowNumber, 1, 1, 3).setNumberFormat('@');
   sheet.getRange(rowNumber, 1, 1, ORA_HEADERS.Attendance_Records.length).setValues(values);
-  invalidateSheetSnapshot_(ORA_SHEETS.ATTENDANCE_RECORDS);
   return attendanceRecordFromRow_(values[0], createHeaderMap_(ORA_HEADERS.Attendance_Records), rowNumber);
 }
 
-function markAttendanceRecordSuccess_(sheet, rowNumber) {
+function markAttendanceRecordSuccess_(sheet, rowNumber, cacheContext) {
   const headerMap = createHeaderMap_(ORA_HEADERS.Attendance_Records);
   sheet.getRange(rowNumber, headerMap.Status + 1).setValue('SUCCESS');
-  invalidateSheetSnapshot_(ORA_SHEETS.ATTENDANCE_RECORDS);
+  invalidateSheetSnapshot_(ORA_SHEETS.ATTENDANCE_RECORDS, cacheContext);
   const row = sheet.getRange(rowNumber, 1, 1, ORA_HEADERS.Attendance_Records.length).getValues()[0];
   return attendanceRecordFromRow_(row, headerMap, rowNumber);
 }
@@ -2775,7 +2880,7 @@ function attendanceEventOrderKey_(event) {
 
 function grantAttendanceXp_(participant, totalXp) {
   // Reuse the single existing User_Stats/level writer. It changes only XP/level.
-  return grantQuestRewardXp_(participant, totalXp);
+  return grantQuestRewardXp_(participant, totalXp, 'attendance');
 }
 
 function getActiveLevels_() {
@@ -3274,7 +3379,11 @@ function appendActivity_(sheet, activity) {
 
   sheet.getRange(nextRow, 1, 1, 2).setNumberFormat('@');
   sheet.getRange(nextRow, 1, 1, ORA_HEADERS.Activities.length).setValues(values);
-  invalidateSheetSnapshot_(ORA_SHEETS.ACTIVITIES);
+  invalidateSheetSnapshot_(ORA_SHEETS.ACTIVITIES, {
+    kind: 'activity',
+    nik: activity.nik,
+    guild: activity.division,
+  });
   return nextRow;
 }
 
@@ -3403,6 +3512,21 @@ function findQuestClaim_(sheet, nik, questId) {
   return null;
 }
 
+function getExistingQuestClaimResponse_(existingClaim) {
+  if (!existingClaim) return null;
+  if (existingClaim.status === 'CLAIMED') {
+    // This short-circuits before progress calculation, claim append, and XP grant.
+    return {
+      status: 'ALREADY_CLAIMED',
+      claim: publicQuestClaim_(existingClaim),
+    };
+  }
+  throw oraError_(
+    'CLAIM_PENDING_REVIEW',
+    'Klaim sebelumnya belum selesai. Silakan coba lagi nanti.'
+  );
+}
+
 function appendQuestClaim_(sheet, claim) {
   const now = new Date();
   const rowNumber = sheet.getLastRow() + 1;
@@ -3418,16 +3542,15 @@ function appendQuestClaim_(sheet, claim) {
   ]];
   sheet.getRange(rowNumber, 1, 1, 3).setNumberFormat('@');
   sheet.getRange(rowNumber, 1, 1, ORA_HEADERS.Quest_Claims.length).setValues(values);
-  invalidateSheetSnapshot_(ORA_SHEETS.QUEST_CLAIMS);
   return questClaimFromRow_(values[0], createHeaderMap_(ORA_HEADERS.Quest_Claims), rowNumber);
 }
 
-function markQuestClaimed_(sheet, rowNumber) {
+function markQuestClaimed_(sheet, rowNumber, cacheContext) {
   const headerMap = createHeaderMap_(ORA_HEADERS.Quest_Claims);
   const claimedAt = new Date();
   sheet.getRange(rowNumber, headerMap.Status + 1).setValue('CLAIMED');
   sheet.getRange(rowNumber, headerMap.ClaimedAt + 1).setValue(claimedAt);
-  invalidateSheetSnapshot_(ORA_SHEETS.QUEST_CLAIMS);
+  invalidateSheetSnapshot_(ORA_SHEETS.QUEST_CLAIMS, cacheContext);
   const row = sheet.getRange(rowNumber, 1, 1, ORA_HEADERS.Quest_Claims.length)
     .getValues()[0];
   return questClaimFromRow_(row, headerMap, rowNumber);
@@ -3662,7 +3785,11 @@ function upsertUserStats_(activity) {
 
   sheet.getRange(targetRow, 1).setNumberFormat('@');
   sheet.getRange(targetRow, 1, 1, ORA_HEADERS.User_Stats.length).setValues(values);
-  invalidateSheetSnapshot_(ORA_SHEETS.USER_STATS);
+  invalidateSheetSnapshot_(ORA_SHEETS.USER_STATS, {
+    kind: 'activity',
+    nik: activity.nik,
+    guild: activity.division,
+  });
 
   return {
     nik: String(activity.nik),
@@ -3678,7 +3805,7 @@ function upsertUserStats_(activity) {
   };
 }
 
-function grantQuestRewardXp_(participant, rewardXp) {
+function grantQuestRewardXp_(participant, rewardXp, cacheKind) {
   const sheet = ensureUserStatsSheet_();
   const existing = getUserStatsByNik_(participant.nik);
   const stats = existing || createDefaultUserStats_(participant);
@@ -3709,12 +3836,18 @@ function grantQuestRewardXp_(participant, rewardXp) {
 
   sheet.getRange(targetRow, 1).setNumberFormat('@');
   sheet.getRange(targetRow, 1, 1, ORA_HEADERS.User_Stats.length).setValues(values);
-  invalidateSheetSnapshot_(ORA_SHEETS.USER_STATS);
+  const cacheContext = {
+    kind: cacheKind || 'xpOnly',
+    nik: participant.nik,
+    guild: participant.divisionGuild,
+  };
+  invalidateSheetSnapshot_(ORA_SHEETS.USER_STATS, cacheContext);
   return {
     sheet: sheet,
     targetRow: targetRow,
     previousValues: previousValues,
     stats: updated,
+    cacheContext: cacheContext,
   };
 }
 
@@ -3747,7 +3880,7 @@ function restoreUserStatsWrite_(write) {
   } else {
     write.sheet.deleteRow(write.targetRow);
   }
-  invalidateSheetSnapshot_(ORA_SHEETS.USER_STATS);
+  invalidateSheetSnapshot_(ORA_SHEETS.USER_STATS, write.cacheContext);
 }
 
 function roundDecimal_(value, decimalPlaces) {
@@ -4313,6 +4446,11 @@ function resetRequestSheetSnapshots_() {
   ORA_RUNTIME_CACHE.readHeavyData = {};
   ORA_RUNTIME_CACHE.readHeavyCacheStats = {};
   ORA_RUNTIME_CACHE.readHeavyGeneration = null;
+  ORA_RUNTIME_CACHE.readHeavyScopedGenerations = {};
+  ORA_RUNTIME_CACHE.questProgressData = {};
+  ORA_RUNTIME_CACHE.questProgressCacheStats = {};
+  ORA_RUNTIME_CACHE.questProgressGeneration = null;
+  ORA_RUNTIME_CACHE.questProgressScopedGenerations = {};
 }
 
 function isRequestSnapshotSheet_(sheetName) {
@@ -4366,14 +4504,14 @@ function readSheetDisplayValues_(sheetName, sheetOverride) {
   return snapshot.displayValues;
 }
 
-function invalidateSheetSnapshot_(sheetName) {
+function invalidateSheetSnapshot_(sheetName, cacheContext) {
   if (isRequestSnapshotSheet_(sheetName)) {
     delete ORA_RUNTIME_CACHE.sheetSnapshots[sheetName];
   }
   invalidateMasterDataCache_(sheetName);
-  if (shouldInvalidateGuildLeaderboardCacheForSheet_(sheetName)) {
-    invalidateGuildLeaderboardCaches_();
-  }
+  const plan = getCacheInvalidationPlan_(sheetName, cacheContext);
+  if (plan.readHeavy) invalidateGuildLeaderboardCaches_(plan.readHeavy);
+  if (plan.quest) invalidateQuestProgressCaches_(plan.quest);
 }
 
 function getMasterDataCacheDefinition_(sheetName) {
@@ -4469,6 +4607,8 @@ function invalidateAllMasterDataCaches_() {
   Object.keys(ORA_MASTER_CACHE_DEFINITIONS).forEach(function (sheetName) {
     invalidateMasterDataCache_(sheetName);
   });
+  invalidateGuildLeaderboardCaches_();
+  invalidateQuestProgressCaches_();
 }
 
 function recordMasterCacheAccess_(sheetName, metric) {
@@ -4499,6 +4639,88 @@ function shouldInvalidateGuildLeaderboardCacheForSheet_(sheetName) {
   ].indexOf(sheetName) >= 0;
 }
 
+function shouldInvalidateQuestProgressCacheForSheet_(sheetName) {
+  return [
+    ORA_SHEETS.PARTICIPANTS,
+    ORA_SHEETS.ACTIVITIES,
+    ORA_SHEETS.USER_STATS,
+    ORA_SHEETS.QUEST_CLAIMS,
+    ORA_SHEETS.QUESTS,
+    ORA_SHEETS.CONFIG,
+    ORA_SHEETS.ATTENDANCE_RECORDS,
+  ].indexOf(sheetName) >= 0;
+}
+
+function shouldInvalidateAnyPerformanceCacheForSheet_(sheetName) {
+  return !!getMasterDataCacheDefinition_(sheetName) ||
+    shouldInvalidateGuildLeaderboardCacheForSheet_(sheetName) ||
+    shouldInvalidateQuestProgressCacheForSheet_(sheetName);
+}
+
+function normalizeCacheInvalidationContext_(context) {
+  const source = context || {};
+  const members = (source.members || []).concat(source.nik ? [source.nik] : []).map(function (nik) {
+    return normalizeDigits_(nik);
+  }).filter(function (nik) {
+    return !!nik;
+  });
+  const guilds = (source.guilds || []).concat(source.guild ? [source.guild] : []).map(function (guild) {
+    return String(guild || '').trim();
+  }).filter(function (guild) {
+    return !!guild;
+  });
+  return {
+    kind: String(source.kind || '').trim(),
+    members: members.filter(function (value, index) { return members.indexOf(value) === index; }),
+    guilds: guilds.filter(function (value, index) { return guilds.indexOf(value) === index; }),
+  };
+}
+
+function getCacheInvalidationPlan_(sheetName, context) {
+  const target = normalizeCacheInvalidationContext_(context);
+  const hasTarget = target.members.length > 0 || target.guilds.length > 0;
+  const allQuest = { all: true };
+  const allReadHeavy = { all: true };
+  const memberQuest = { all: false, members: target.members, guilds: target.guilds };
+  const xpOnlyQuest = { all: false, members: target.members, guilds: [] };
+  const guildAndGlobal = { all: false, globalScope: true, guilds: target.guilds };
+
+  switch (sheetName) {
+    case ORA_SHEETS.ACTIVITIES:
+      if (target.kind === 'nonProgress') return {};
+      return hasTarget
+        ? { quest: memberQuest, readHeavy: guildAndGlobal }
+        : { quest: allQuest, readHeavy: allReadHeavy };
+    case ORA_SHEETS.USER_STATS:
+      if (!hasTarget) return { quest: allQuest, readHeavy: allReadHeavy };
+      return {
+        // User_Stats belongs to one member; GUILD_DISTANCE is calculated from
+        // Activities, so a stats write does not require flushing peer Quests.
+        quest: xpOnlyQuest,
+        readHeavy: guildAndGlobal,
+      };
+    case ORA_SHEETS.ATTENDANCE_RECORDS:
+    case ORA_SHEETS.QUEST_CLAIMS:
+      return hasTarget ? { quest: xpOnlyQuest } : { quest: allQuest };
+    case ORA_SHEETS.PARTICIPANTS:
+      if (target.kind === 'nonProgress') return {};
+      if (!hasTarget) return { quest: allQuest, readHeavy: allReadHeavy };
+      if (target.kind === 'nickname') return { readHeavy: guildAndGlobal };
+      return { quest: memberQuest, readHeavy: guildAndGlobal };
+    case ORA_SHEETS.QUESTS:
+    case ORA_SHEETS.CONFIG:
+      return { quest: allQuest };
+    case ORA_SHEETS.GUILD_MASTER:
+      return hasTarget
+        ? { readHeavy: guildAndGlobal }
+        : { readHeavy: allReadHeavy };
+    case ORA_SHEETS.LEVELS:
+      return { readHeavy: allReadHeavy };
+    default:
+      return {};
+  }
+}
+
 function getReadHeavyCacheGeneration_() {
   if (ORA_RUNTIME_CACHE.readHeavyGeneration) {
     return ORA_RUNTIME_CACHE.readHeavyGeneration;
@@ -4523,6 +4745,34 @@ function getReadHeavyCacheGeneration_() {
   return ORA_RUNTIME_CACHE.readHeavyGeneration;
 }
 
+function getReadHeavyCacheScopeGeneration_(scope) {
+  const normalizedScope = String(scope || 'GLOBAL');
+  if (ORA_RUNTIME_CACHE.readHeavyScopedGenerations[normalizedScope]) {
+    return ORA_RUNTIME_CACHE.readHeavyScopedGenerations[normalizedScope];
+  }
+
+  const cacheKey = ORA_READ_HEAVY_CACHE.generationKey + ':scope:' +
+    readHeavyCacheIdentity_(normalizedScope);
+  const cache = CacheService.getScriptCache();
+  try {
+    let generation = cache.get(cacheKey);
+    if (!generation) {
+      generation = Utilities.getUuid();
+      cache.put(cacheKey, generation, ORA_READ_HEAVY_CACHE.generationTtlSeconds);
+    }
+    ORA_RUNTIME_CACHE.readHeavyScopedGenerations[normalizedScope] = generation;
+  } catch (error) {
+    ORA_RUNTIME_CACHE.readHeavyScopedGenerations[normalizedScope] = Utilities.getUuid();
+    recordReadHeavyCacheAccess_('generation', 'errors');
+  }
+  return ORA_RUNTIME_CACHE.readHeavyScopedGenerations[normalizedScope];
+}
+
+function getGuildReadHeavyCacheScope_(division) {
+  const normalizedDivision = normalizeDivisionKey_(division);
+  return normalizedDivision ? 'GUILD:' + readHeavyCacheIdentity_(normalizedDivision) : 'GLOBAL';
+}
+
 function readHeavyCacheIdentity_(value) {
   const digest = Utilities.computeDigest(
     Utilities.DigestAlgorithm.SHA_256,
@@ -4532,16 +4782,17 @@ function readHeavyCacheIdentity_(value) {
   return Utilities.base64EncodeWebSafe(digest).replace(/=+$/g, '').slice(0, 24);
 }
 
-function buildReadHeavyCacheKey_(cacheType, keyParts) {
+function buildReadHeavyCacheKey_(cacheType, keyParts, scope) {
   return [
     ORA_READ_HEAVY_CACHE.prefix,
     getReadHeavyCacheGeneration_(),
+    getReadHeavyCacheScopeGeneration_(scope),
     cacheType,
   ].concat(keyParts || []).join(':');
 }
 
-function getCachedGuildLeaderboardData_(cacheType, keyParts, loader) {
-  const key = buildReadHeavyCacheKey_(cacheType, keyParts);
+function getCachedGuildLeaderboardData_(cacheType, keyParts, loader, scope) {
+  const key = buildReadHeavyCacheKey_(cacheType, keyParts, scope);
   if (Object.prototype.hasOwnProperty.call(ORA_RUNTIME_CACHE.readHeavyData, key)) {
     recordReadHeavyCacheAccess_(cacheType, 'runtimeHits');
     return ORA_RUNTIME_CACHE.readHeavyData[key];
@@ -4582,23 +4833,50 @@ function getCachedGuildLeaderboardData_(cacheType, keyParts, loader) {
   return loadedValue;
 }
 
-function invalidateGuildLeaderboardCaches_() {
+function invalidateGuildLeaderboardCaches_(options) {
   ORA_RUNTIME_CACHE.readHeavyData = {};
-  const generation = Utilities.getUuid();
-  ORA_RUNTIME_CACHE.readHeavyGeneration = generation;
-  try {
-    const cache = CacheService.getScriptCache();
-    cache.remove(ORA_READ_HEAVY_CACHE.generationKey);
-    cache.put(
-      ORA_READ_HEAVY_CACHE.generationKey,
-      generation,
-      ORA_READ_HEAVY_CACHE.generationTtlSeconds
-    );
-    recordReadHeavyCacheAccess_('generation', 'invalidations');
-  } catch (error) {
-    recordReadHeavyCacheAccess_('generation', 'errors');
-    console.warn('[CACHE] action=invalidate_failed type=guild_leaderboard');
+  const config = options || { all: true };
+  if (config.all !== false) {
+    const generation = Utilities.getUuid();
+    ORA_RUNTIME_CACHE.readHeavyGeneration = generation;
+    ORA_RUNTIME_CACHE.readHeavyScopedGenerations = {};
+    try {
+      const cache = CacheService.getScriptCache();
+      cache.remove(ORA_READ_HEAVY_CACHE.generationKey);
+      cache.put(
+        ORA_READ_HEAVY_CACHE.generationKey,
+        generation,
+        ORA_READ_HEAVY_CACHE.generationTtlSeconds
+      );
+      recordReadHeavyCacheAccess_('generation', 'invalidations');
+    } catch (error) {
+      recordReadHeavyCacheAccess_('generation', 'errors');
+      console.warn('[CACHE] action=invalidate_failed type=guild_leaderboard');
+    }
+    return;
   }
+
+  const scopes = [];
+  if (config.globalScope) scopes.push('GLOBAL');
+  (config.guilds || []).forEach(function (division) {
+    const scope = getGuildReadHeavyCacheScope_(division);
+    if (scope !== 'GLOBAL') scopes.push(scope);
+  });
+  scopes.forEach(function (scope) {
+    const generation = Utilities.getUuid();
+    const cacheKey = ORA_READ_HEAVY_CACHE.generationKey + ':scope:' +
+      readHeavyCacheIdentity_(scope);
+    ORA_RUNTIME_CACHE.readHeavyScopedGenerations[scope] = generation;
+    try {
+      const cache = CacheService.getScriptCache();
+      cache.remove(cacheKey);
+      cache.put(cacheKey, generation, ORA_READ_HEAVY_CACHE.generationTtlSeconds);
+      recordReadHeavyCacheAccess_('generation', 'invalidations');
+    } catch (error) {
+      recordReadHeavyCacheAccess_('generation', 'errors');
+      console.warn('[CACHE] action=invalidate_failed type=guild_leaderboard');
+    }
+  });
 }
 
 function recordReadHeavyCacheAccess_(cacheType, metric) {
@@ -4617,6 +4895,170 @@ function recordReadHeavyCacheAccess_(cacheType, metric) {
 
 function getReadHeavyCacheStats_() {
   return JSON.parse(JSON.stringify(ORA_RUNTIME_CACHE.readHeavyCacheStats));
+}
+
+function getQuestProgressCacheGeneration_() {
+  if (ORA_RUNTIME_CACHE.questProgressGeneration) {
+    return ORA_RUNTIME_CACHE.questProgressGeneration;
+  }
+
+  const cache = CacheService.getScriptCache();
+  try {
+    let generation = cache.get(ORA_QUEST_PROGRESS_CACHE.generationKey);
+    if (!generation) {
+      generation = Utilities.getUuid();
+      cache.put(
+        ORA_QUEST_PROGRESS_CACHE.generationKey,
+        generation,
+        ORA_QUEST_PROGRESS_CACHE.generationTtlSeconds
+      );
+    }
+    ORA_RUNTIME_CACHE.questProgressGeneration = generation;
+  } catch (error) {
+    ORA_RUNTIME_CACHE.questProgressGeneration = Utilities.getUuid();
+    recordQuestProgressCacheAccess_('generation', 'errors');
+  }
+  return ORA_RUNTIME_CACHE.questProgressGeneration;
+}
+
+function getQuestProgressCacheScopeGeneration_(scope) {
+  const normalizedScope = String(scope || 'GLOBAL');
+  if (ORA_RUNTIME_CACHE.questProgressScopedGenerations[normalizedScope]) {
+    return ORA_RUNTIME_CACHE.questProgressScopedGenerations[normalizedScope];
+  }
+
+  const cacheKey = ORA_QUEST_PROGRESS_CACHE.generationKey + ':scope:' +
+    readHeavyCacheIdentity_(normalizedScope);
+  const cache = CacheService.getScriptCache();
+  try {
+    let generation = cache.get(cacheKey);
+    if (!generation) {
+      generation = Utilities.getUuid();
+      cache.put(cacheKey, generation, ORA_QUEST_PROGRESS_CACHE.generationTtlSeconds);
+    }
+    ORA_RUNTIME_CACHE.questProgressScopedGenerations[normalizedScope] = generation;
+  } catch (error) {
+    ORA_RUNTIME_CACHE.questProgressScopedGenerations[normalizedScope] = Utilities.getUuid();
+    recordQuestProgressCacheAccess_('generation', 'errors');
+  }
+  return ORA_RUNTIME_CACHE.questProgressScopedGenerations[normalizedScope];
+}
+
+function buildQuestProgressCacheKey_(nik, division) {
+  const memberIdentity = readHeavyCacheIdentity_(normalizeDigits_(nik));
+  const guildIdentity = readHeavyCacheIdentity_(normalizeDivisionKey_(division));
+  return [
+    ORA_QUEST_PROGRESS_CACHE.prefix,
+    getQuestProgressCacheGeneration_(),
+    getQuestProgressCacheScopeGeneration_('MEMBER:' + memberIdentity),
+    getQuestProgressCacheScopeGeneration_('GUILD:' + guildIdentity),
+    memberIdentity,
+  ].join(':');
+}
+
+function getCachedQuestProgressForParticipant_(participant, loader) {
+  const key = buildQuestProgressCacheKey_(participant.nik, participant.divisionGuild);
+  if (Object.prototype.hasOwnProperty.call(ORA_RUNTIME_CACHE.questProgressData, key)) {
+    recordQuestProgressCacheAccess_('progress', 'runtimeHits');
+    return ORA_RUNTIME_CACHE.questProgressData[key];
+  }
+
+  const cache = CacheService.getScriptCache();
+  try {
+    const serialized = cache.get(key);
+    if (serialized !== null) {
+      const cachedValue = deserializeMasterDataCacheValue_(serialized);
+      ORA_RUNTIME_CACHE.questProgressData[key] = cachedValue;
+      recordQuestProgressCacheAccess_('progress', 'scriptHits');
+      return cachedValue;
+    }
+  } catch (error) {
+    recordQuestProgressCacheAccess_('progress', 'errors');
+    try {
+      cache.remove(key);
+    } catch (removeError) {
+      console.warn('[CACHE] action=remove_failed type=quest_progress');
+    }
+  }
+
+  recordQuestProgressCacheAccess_('progress', 'misses');
+  const loadedValue = loader();
+  ORA_RUNTIME_CACHE.questProgressData[key] = loadedValue;
+  try {
+    cache.put(
+      key,
+      serializeMasterDataCacheValue_(loadedValue),
+      ORA_QUEST_PROGRESS_CACHE.ttlSeconds
+    );
+    recordQuestProgressCacheAccess_('progress', 'puts');
+  } catch (error) {
+    recordQuestProgressCacheAccess_('progress', 'errors');
+    console.warn('[CACHE] action=put_failed type=quest_progress');
+  }
+  return loadedValue;
+}
+
+function invalidateQuestProgressCaches_(options) {
+  ORA_RUNTIME_CACHE.questProgressData = {};
+  const config = options || { all: true };
+  if (config.all !== false) {
+    const generation = Utilities.getUuid();
+    ORA_RUNTIME_CACHE.questProgressGeneration = generation;
+    ORA_RUNTIME_CACHE.questProgressScopedGenerations = {};
+    try {
+      const cache = CacheService.getScriptCache();
+      cache.remove(ORA_QUEST_PROGRESS_CACHE.generationKey);
+      cache.put(
+        ORA_QUEST_PROGRESS_CACHE.generationKey,
+        generation,
+        ORA_QUEST_PROGRESS_CACHE.generationTtlSeconds
+      );
+      recordQuestProgressCacheAccess_('generation', 'invalidations');
+    } catch (error) {
+      recordQuestProgressCacheAccess_('generation', 'errors');
+      console.warn('[CACHE] action=invalidate_failed type=quest_progress');
+    }
+    return;
+  }
+
+  const scopes = (config.members || []).map(function (nik) {
+    return 'MEMBER:' + readHeavyCacheIdentity_(normalizeDigits_(nik));
+  }).concat((config.guilds || []).map(function (division) {
+    return 'GUILD:' + readHeavyCacheIdentity_(normalizeDivisionKey_(division));
+  }));
+  scopes.forEach(function (scope) {
+    const generation = Utilities.getUuid();
+    const cacheKey = ORA_QUEST_PROGRESS_CACHE.generationKey + ':scope:' +
+      readHeavyCacheIdentity_(scope);
+    ORA_RUNTIME_CACHE.questProgressScopedGenerations[scope] = generation;
+    try {
+      const cache = CacheService.getScriptCache();
+      cache.remove(cacheKey);
+      cache.put(cacheKey, generation, ORA_QUEST_PROGRESS_CACHE.generationTtlSeconds);
+      recordQuestProgressCacheAccess_('generation', 'invalidations');
+    } catch (error) {
+      recordQuestProgressCacheAccess_('generation', 'errors');
+      console.warn('[CACHE] action=invalidate_failed type=quest_progress');
+    }
+  });
+}
+
+function recordQuestProgressCacheAccess_(cacheType, metric) {
+  if (!ORA_RUNTIME_CACHE.questProgressCacheStats[cacheType]) {
+    ORA_RUNTIME_CACHE.questProgressCacheStats[cacheType] = {
+      runtimeHits: 0,
+      scriptHits: 0,
+      misses: 0,
+      puts: 0,
+      invalidations: 0,
+      errors: 0,
+    };
+  }
+  ORA_RUNTIME_CACHE.questProgressCacheStats[cacheType][metric] += 1;
+}
+
+function getQuestProgressCacheStats_() {
+  return JSON.parse(JSON.stringify(ORA_RUNTIME_CACHE.questProgressCacheStats));
 }
 
 function getRequestSheetSnapshotLoadCounts_() {
@@ -4949,8 +5391,14 @@ function ensureActivitySourceColumns_() {
       );
     }
   });
-  sheet.getRange(1, 16, 1, 2).setValues([expected]);
-  invalidateSheetSnapshot_(ORA_SHEETS.ACTIVITIES);
+  const changed = current.some(function (value, index) {
+    return String(value || '').trim() !== expected[index];
+  });
+  if (changed) {
+    sheet.getRange(1, 16, 1, 2).setValues([expected]);
+    // Header-only schema completion does not change any activity progress.
+    invalidateSheetSnapshot_(ORA_SHEETS.ACTIVITIES, { kind: 'nonProgress' });
+  }
   sheet.getRange(1, 16, 1, 2).setFontWeight('bold');
   sheet.getRange('P:Q').setNumberFormat('@');
 }
@@ -4987,8 +5435,15 @@ function setupValidRunConfig() {
   row[headerMap.Data_Type] = definition.dataType;
   row[headerMap.Description] = definition.description;
   row[headerMap.Active] = true;
-  sheet.getRange(rowNumber, 1, 1, row.length).setValues([row]);
-  invalidateSheetSnapshot_(ORA_SHEETS.CONFIG);
+  const existingRow = rowNumber <= values.length ? values[rowNumber - 1] : null;
+  const changed = !existingRow || row.some(function (value, index) {
+    return String(existingRow[index] == null ? '' : existingRow[index]) !==
+      String(value == null ? '' : value);
+  });
+  if (changed) {
+    sheet.getRange(rowNumber, 1, 1, row.length).setValues([row]);
+    invalidateSheetSnapshot_(ORA_SHEETS.CONFIG);
+  }
 
   return {
     ok: true,
@@ -5846,6 +6301,306 @@ function testGuildLeaderboardCacheRegression() {
       ORA_SHEETS.LEVELS,
     ],
   };
+  console.log(JSON.stringify(result, null, 2));
+  return result;
+}
+
+function runQuestProgressCacheRequest_(callback) {
+  resetRequestSheetSnapshots_();
+  const startedAt = Date.now();
+  const payload = JSON.parse(callback().getContent());
+  return {
+    durationMs: Date.now() - startedAt,
+    payload: payload,
+    cacheStats: getQuestProgressCacheStats_(),
+  };
+}
+
+function testQuestProgressCacheIsolationFoundation_() {
+  const firstNik = 'QUEST-CACHE-USER-A';
+  const secondNik = 'QUEST-CACHE-USER-B';
+  invalidateQuestProgressCaches_();
+  const firstKey = buildQuestProgressCacheKey_(firstNik);
+  const secondKey = buildQuestProgressCacheKey_(secondNik);
+
+  assertBackendTest_(firstKey !== secondKey, 'Cache Quest harus terisolasi per member.');
+  assertBackendTest_(
+    firstKey.indexOf(firstNik) === -1 && secondKey.indexOf(secondNik) === -1,
+    'Cache key Quest tidak boleh memuat NIK mentah.'
+  );
+  assertBackendTest_(
+    firstKey.toLowerCase().indexOf('sessiontoken') === -1 &&
+      firstKey.toLowerCase().indexOf('pin') === -1,
+    'Cache key Quest tidak boleh memuat token atau PIN.'
+  );
+
+  return {
+    ok: true,
+    memberKeysDiffer: true,
+    rawNikExcluded: true,
+    sessionTokenExcluded: true,
+    pinExcluded: true,
+  };
+}
+
+function testQuestClaimIdempotencyFoundation_() {
+  const existingClaim = {
+    claimId: 'QUEST-CACHE-CLAIM',
+    questId: 'QUEST-CACHE-Q1',
+    status: 'CLAIMED',
+    claimedAt: new Date('2026-09-02T00:00:00.000Z'),
+  };
+  const response = getExistingQuestClaimResponse_(existingClaim);
+  assertBackendTest_(
+    response.status === 'ALREADY_CLAIMED' && response.claim.claimId === existingClaim.claimId,
+    'Klaim Quest yang sudah CLAIMED harus tetap idempotent.'
+  );
+
+  let pendingError = null;
+  try {
+    getExistingQuestClaimResponse_({ status: 'PROCESSING' });
+  } catch (error) {
+    pendingError = error;
+  }
+  assertBackendTest_(
+    pendingError && pendingError.oraCode === 'CLAIM_PENDING_REVIEW',
+    'Klaim PROCESSING harus tetap ditolak untuk mencegah reward ganda.'
+  );
+  return { ok: true, alreadyClaimedShortCircuit: true, processingBlocked: true };
+}
+
+function testQuestProgressCacheRegression() {
+  const sessionToken = getOrCreateTestSessionToken_();
+  const session = requireSession_(sessionToken);
+  const participant = findParticipantByNik_(session.nik);
+  assertBackendTest_(!!participant, 'Participant test cache Quest tidak ditemukan.');
+  assertBackendTest_(ORA_QUEST_PROGRESS_CACHE.ttlSeconds === 60, 'TTL cache Quest harus 60 detik.');
+
+  const run = function () {
+    return handleGetQuestProgress_({ action: 'getQuestProgress', sessionToken: sessionToken });
+  };
+  invalidateQuestProgressCaches_();
+  const cold = runQuestProgressCacheRequest_(run);
+  const warm = runQuestProgressCacheRequest_(run);
+  const coldStats = cold.cacheStats.progress || {};
+  const warmStats = warm.cacheStats.progress || {};
+  assertBackendTest_(cold.payload.ok === true && warm.payload.ok === true, 'Quest cache response gagal.');
+  assertBackendTest_(
+    normalizeBenchmarkPayload_(cold.payload) === normalizeBenchmarkPayload_(warm.payload),
+    'Response Quest cold dan warm berbeda.'
+  );
+  assertBackendTest_(coldStats.misses === 1 && coldStats.puts === 1, 'Quest cold harus cache miss lalu put.');
+  assertBackendTest_(warmStats.scriptHits === 1, 'Quest warm harus ScriptCache hit.');
+
+  const invalidationSheets = [
+    { name: 'activitySavedOrStravaRemap', sheetName: ORA_SHEETS.ACTIVITIES },
+    { name: 'attendanceSuccess', sheetName: ORA_SHEETS.ATTENDANCE_RECORDS },
+    { name: 'questClaim', sheetName: ORA_SHEETS.QUEST_CLAIMS },
+    { name: 'userStatsXpUpdate', sheetName: ORA_SHEETS.USER_STATS },
+    { name: 'questMasterChanged', sheetName: ORA_SHEETS.QUESTS },
+    { name: 'questConfigChanged', sheetName: ORA_SHEETS.CONFIG },
+  ];
+  const invalidation = {};
+  invalidationSheets.forEach(function (item) {
+    invalidateQuestProgressCaches_();
+    const before = runQuestProgressCacheRequest_(run);
+    invalidateSheetSnapshot_(item.sheetName);
+    const after = runQuestProgressCacheRequest_(run);
+    assertBackendTest_(
+      (after.cacheStats.progress || {}).misses === 1,
+      item.name + ' harus membuat Quest cache miss.'
+    );
+    assertBackendTest_(
+      normalizeBenchmarkPayload_(before.payload) === normalizeBenchmarkPayload_(after.payload),
+      item.name + ' mengubah response tanpa perubahan data sheet.'
+    );
+    invalidation[item.name] = true;
+  });
+
+  const result = {
+    ok: true,
+    ttlSeconds: ORA_QUEST_PROGRESS_CACHE.ttlSeconds,
+    cacheKey: ORA_QUEST_PROGRESS_CACHE.prefix + ':<generation>:<sha256-nik>',
+    coldWarmIdentical: true,
+    coldMs: cold.durationMs,
+    warmMs: warm.durationMs,
+    speedupRatio: roundDecimal_(cold.durationMs / Math.max(1, warm.durationMs), 2),
+    coldCacheStats: cold.cacheStats,
+    warmCacheStats: warm.cacheStats,
+    invalidation: invalidation,
+    userIsolation: testQuestProgressCacheIsolationFoundation_(),
+    claimIdempotency: testQuestClaimIdempotencyFoundation_(),
+  };
+  console.log(JSON.stringify(result, null, 2));
+  return result;
+}
+
+function testCacheInvalidationConsistency() {
+  const memberA = { nik: 'CACHE-A', divisionGuild: 'GUILD-A' };
+  const memberB = { nik: 'CACHE-B', divisionGuild: 'GUILD-B' };
+  const questLoads = { A: 0, B: 0 };
+  const guildLoads = { A: 0, B: 0 };
+  const questLoaderA = function () { questLoads.A += 1; return [{ questId: 'A', progress: questLoads.A }]; };
+  const questLoaderB = function () { questLoads.B += 1; return [{ questId: 'B', progress: questLoads.B }]; };
+  const guildLoaderA = function () { guildLoads.A += 1; return { guild: 'A', version: guildLoads.A }; };
+  const guildLoaderB = function () { guildLoads.B += 1; return { guild: 'B', version: guildLoads.B }; };
+  const guildScopeA = getGuildReadHeavyCacheScope_(memberA.divisionGuild);
+  const guildScopeB = getGuildReadHeavyCacheScope_(memberB.divisionGuild);
+
+  invalidateQuestProgressCaches_();
+  invalidateGuildLeaderboardCaches_();
+  resetRequestSheetSnapshots_();
+  getCachedQuestProgressForParticipant_(memberA, questLoaderA);
+  getCachedQuestProgressForParticipant_(memberB, questLoaderB);
+  getCachedGuildLeaderboardData_('guild_summary', ['A'], guildLoaderA, guildScopeA);
+  getCachedGuildLeaderboardData_('guild_summary', ['B'], guildLoaderB, guildScopeB);
+
+  resetRequestSheetSnapshots_();
+  getCachedQuestProgressForParticipant_(memberA, questLoaderA);
+  getCachedQuestProgressForParticipant_(memberB, questLoaderB);
+  getCachedGuildLeaderboardData_('guild_summary', ['A'], guildLoaderA, guildScopeA);
+  getCachedGuildLeaderboardData_('guild_summary', ['B'], guildLoaderB, guildScopeB);
+  assertBackendTest_(
+    questLoads.A === 1 && questLoads.B === 1 && guildLoads.A === 1 && guildLoads.B === 1,
+    'Read-only request harus tetap cache hit.'
+  );
+
+  invalidateSheetSnapshot_(ORA_SHEETS.ACTIVITIES, {
+    kind: 'activity', nik: memberA.nik, guild: memberA.divisionGuild,
+  });
+  resetRequestSheetSnapshots_();
+  getCachedQuestProgressForParticipant_(memberA, questLoaderA);
+  getCachedQuestProgressForParticipant_(memberB, questLoaderB);
+  getCachedGuildLeaderboardData_('guild_summary', ['A'], guildLoaderA, guildScopeA);
+  getCachedGuildLeaderboardData_('guild_summary', ['B'], guildLoaderB, guildScopeB);
+  assertBackendTest_(
+    questLoads.A === 2 && questLoads.B === 1,
+    'Activity user A tidak boleh membuang Quest cache user B beda guild.'
+  );
+  assertBackendTest_(
+    guildLoads.A === 2 && guildLoads.B === 1,
+    'Perubahan guild A tidak boleh membuang cache guild B.'
+  );
+
+  invalidateSheetSnapshot_(ORA_SHEETS.GUILD_MASTER, {
+    kind: 'guildMaster', guild: memberA.divisionGuild,
+  });
+  resetRequestSheetSnapshots_();
+  getCachedGuildLeaderboardData_('guild_summary', ['A'], guildLoaderA, guildScopeA);
+  getCachedGuildLeaderboardData_('guild_summary', ['B'], guildLoaderB, guildScopeB);
+  assertBackendTest_(
+    guildLoads.A === 3 && guildLoads.B === 1,
+    'Edit Guild_Master A tidak boleh membuang cache Guild B.'
+  );
+
+  resetRequestSheetSnapshots_();
+  getCachedQuestProgressForParticipant_(memberB, questLoaderB);
+  assertBackendTest_(questLoads.B === 1, 'Duplicate/no-op tidak boleh menginvalidasi Quest cache.');
+  const unmappedStravaPlan = getCacheInvalidationPlan_(ORA_SHEETS.ACTIVITIES, {
+    kind: 'nonProgress', members: [], guilds: [],
+  });
+  assertBackendTest_(
+    !unmappedStravaPlan.quest && !unmappedStravaPlan.readHeavy,
+    'Strava UNMAPPED tidak boleh menginvalidasi cache progress.'
+  );
+  const userStatsPlan = getCacheInvalidationPlan_(ORA_SHEETS.USER_STATS, {
+    kind: 'activity', nik: memberA.nik, guild: memberA.divisionGuild,
+  });
+  assertBackendTest_(
+    userStatsPlan.quest.members.length === 1 && userStatsPlan.quest.guilds.length === 0,
+    'User_Stats harus menginvalidasi Quest member saja, bukan seluruh guild.'
+  );
+
+  invalidateSheetSnapshot_(ORA_SHEETS.QUEST_CLAIMS, {
+    kind: 'questClaim', nik: memberA.nik,
+  });
+  resetRequestSheetSnapshots_();
+  getCachedQuestProgressForParticipant_(memberA, questLoaderA);
+  getCachedQuestProgressForParticipant_(memberB, questLoaderB);
+  assertBackendTest_(
+    questLoads.A === 3 && questLoads.B === 1,
+    'Quest claim hanya boleh menginvalidasi member terkait.'
+  );
+
+  invalidateSheetSnapshot_(ORA_SHEETS.ATTENDANCE_RECORDS, {
+    kind: 'attendance', nik: memberA.nik,
+  });
+  resetRequestSheetSnapshots_();
+  getCachedQuestProgressForParticipant_(memberA, questLoaderA);
+  getCachedQuestProgressForParticipant_(memberB, questLoaderB);
+  assertBackendTest_(
+    questLoads.A === 4 && questLoads.B === 1,
+    'Attendance hanya boleh menginvalidasi Quest member terkait.'
+  );
+
+  // A rollback rotates the same targeted generation again, so no intermediate
+  // response can remain reachable after the final sheet state is restored.
+  invalidateSheetSnapshot_(ORA_SHEETS.ACTIVITIES, {
+    kind: 'activity', nik: memberA.nik, guild: memberA.divisionGuild,
+  });
+  invalidateSheetSnapshot_(ORA_SHEETS.ACTIVITIES, {
+    kind: 'activity', nik: memberA.nik, guild: memberA.divisionGuild,
+  });
+  resetRequestSheetSnapshots_();
+  getCachedQuestProgressForParticipant_(memberA, questLoaderA);
+  assertBackendTest_(questLoads.A === 5, 'Rollback harus memaksa hasil Quest final yang fresh.');
+
+  invalidateSheetSnapshot_(ORA_SHEETS.CONFIG);
+  resetRequestSheetSnapshots_();
+  getCachedQuestProgressForParticipant_(memberA, questLoaderA);
+  getCachedQuestProgressForParticipant_(memberB, questLoaderB);
+  assertBackendTest_(
+    questLoads.A === 6 && questLoads.B === 2,
+    'Config Quest harus menginvalidasi semua cache Quest.'
+  );
+
+  invalidateSheetSnapshot_(ORA_SHEETS.LEVELS);
+  resetRequestSheetSnapshots_();
+  getCachedGuildLeaderboardData_('guild_summary', ['A'], guildLoaderA, guildScopeA);
+  getCachedGuildLeaderboardData_('guild_summary', ['B'], guildLoaderB, guildScopeB);
+  assertBackendTest_(
+    guildLoads.A === 4 && guildLoads.B === 2,
+    'Master level harus menginvalidasi cache Guild global.'
+  );
+
+  const result = {
+    ok: true,
+    readOnlyHits: true,
+    activityUserIsolation: true,
+    guildScopeIsolation: true,
+    guildMasterScopeIsolation: true,
+    duplicateNoInvalidation: true,
+    userStatsMemberOnly: true,
+    rollbackFreshResult: true,
+    questClaimTargeted: true,
+    attendanceTargeted: true,
+    masterGlobalInvalidation: true,
+  };
+  console.log(JSON.stringify(result, null, 2));
+  return result;
+}
+
+function benchmarkQuestProgressCache() {
+  const sessionToken = getOrCreateTestSessionToken_();
+  const run = function () {
+    return handleGetQuestProgress_({ action: 'getQuestProgress', sessionToken: sessionToken });
+  };
+  invalidateQuestProgressCaches_();
+  const cold = runQuestProgressCacheRequest_(run);
+  const warm = runQuestProgressCacheRequest_(run);
+  const result = {
+    ok: true,
+    ttlSeconds: ORA_QUEST_PROGRESS_CACHE.ttlSeconds,
+    coldMs: cold.durationMs,
+    warmMs: warm.durationMs,
+    deltaMs: cold.durationMs - warm.durationMs,
+    speedupRatio: roundDecimal_(cold.durationMs / Math.max(1, warm.durationMs), 2),
+    responseIdentical:
+      normalizeBenchmarkPayload_(cold.payload) === normalizeBenchmarkPayload_(warm.payload),
+    coldCacheStats: cold.cacheStats,
+    warmCacheStats: warm.cacheStats,
+  };
+  assertBackendTest_(result.responseIdentical, 'Benchmark Quest cold/warm response berbeda.');
   console.log(JSON.stringify(result, null, 2));
   return result;
 }

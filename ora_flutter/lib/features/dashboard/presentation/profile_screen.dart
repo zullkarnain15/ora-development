@@ -76,6 +76,15 @@ class _ProfileScreenState extends State<ProfileScreen> {
                 ),
               ],
             ),
+            if (controller.isStatsRefreshing ||
+                controller.isActivityRefreshing) ...[
+              const SizedBox(height: 10),
+              OraRefreshStatus(
+                key: const Key('profile_refresh_status'),
+                refreshing: true,
+                warning: controller.statsError,
+              ),
+            ],
             const SizedBox(height: 18),
             _status(context),
             const SizedBox(height: 14),

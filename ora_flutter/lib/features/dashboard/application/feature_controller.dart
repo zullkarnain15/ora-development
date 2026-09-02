@@ -8,6 +8,7 @@ import '../../activity/data/activity_store.dart';
 import '../../activity/domain/final_activity.dart';
 import '../../activity/domain/server_activity_summary.dart';
 import '../../auth/domain/auth_models.dart';
+import '../data/feature_cache_store.dart';
 import '../data/ora_feature_api.dart';
 import '../domain/feature_models.dart';
 
@@ -22,11 +23,14 @@ class FeatureController extends ChangeNotifier {
     required this.session,
     required this.api,
     required this.activityStore,
-  }) : syncService = ActivitySyncService(store: activityStore, api: api);
+    FeatureCacheStore? cacheStore,
+  }) : cacheStore = cacheStore ?? MemoryFeatureCacheStore(),
+       syncService = ActivitySyncService(store: activityStore, api: api);
 
   UserSession session;
   final OraFeatureApi api;
   final ActivityStore activityStore;
+  final FeatureCacheStore cacheStore;
   final ActivitySyncService syncService;
 
   LoadPhase statsPhase = LoadPhase.idle;
@@ -64,6 +68,10 @@ class FeatureController extends ChangeNotifier {
   bool syncError = false;
 
   bool _disposed = false;
+  Future<void>? _hydrateFuture;
+  Future<void> _cacheWriteQueue = Future<void>.value();
+  final Map<String, LeaderboardData> _cachedLeaderboards = {};
+  bool _hasPersistentQuestData = false;
 
   void updateSession(UserSession value) {
     if (value.nik != session.nik) return;
@@ -76,10 +84,8 @@ class FeatureController extends ChangeNotifier {
   }
 
   Future<void> loadStats({bool force = false}) async {
-    if (statsPhase == LoadPhase.loading ||
-        (!force && statsPhase == LoadPhase.ready)) {
-      return;
-    }
+    await _ensureHydrated();
+    if (_disposed || statsPhase == LoadPhase.loading) return;
     statsPhase = LoadPhase.loading;
     statsError = null;
     _safeNotify();
@@ -93,21 +99,23 @@ class FeatureController extends ChangeNotifier {
       }
       stats = result;
       statsPhase = LoadPhase.ready;
+      _scheduleCacheWrite();
     } on BackendFailure catch (error) {
-      statsPhase = LoadPhase.error;
       statsError = _featureMessage(error, 'RPG STATS UNAVAILABLE - TRY AGAIN');
+      statsPhase =
+          stats == null || error.kind == BackendFailureKind.invalidResponse
+          ? LoadPhase.error
+          : LoadPhase.ready;
     } on Object {
-      statsPhase = LoadPhase.error;
       statsError = 'RPG STATS UNAVAILABLE - TRY AGAIN';
+      statsPhase = stats == null ? LoadPhase.error : LoadPhase.ready;
     }
     _safeNotify();
   }
 
   Future<void> loadQuests({bool force = false}) async {
-    if (questPhase == LoadPhase.loading ||
-        (!force && questPhase == LoadPhase.ready)) {
-      return;
-    }
+    await _ensureHydrated();
+    if (_disposed || questPhase == LoadPhase.loading) return;
     questPhase = LoadPhase.loading;
     questError = null;
     _safeNotify();
@@ -115,18 +123,29 @@ class FeatureController extends ChangeNotifier {
       try {
         quests = await api.questProgress(session.sessionToken);
         questsAreFallback = false;
+        _hasPersistentQuestData = true;
+        _scheduleCacheWrite();
       } on BackendFailure catch (error) {
         if (error.invalidatesSession) rethrow;
+        if (_hasPersistentQuestData) {
+          questPhase = LoadPhase.ready;
+          questError = _featureMessage(
+            error,
+            'QUEST REFRESH FAILED - SHOWING SAVED DATA',
+          );
+          _safeNotify();
+          return;
+        }
         quests = await api.quests();
         questsAreFallback = true;
       }
       questPhase = LoadPhase.ready;
     } on BackendFailure catch (error) {
-      questPhase = LoadPhase.error;
       questError = _featureMessage(error, 'QUESTS UNAVAILABLE - TRY AGAIN');
+      questPhase = _hasPersistentQuestData ? LoadPhase.ready : LoadPhase.error;
     } on Object {
-      questPhase = LoadPhase.error;
       questError = 'QUESTS UNAVAILABLE - TRY AGAIN';
+      questPhase = _hasPersistentQuestData ? LoadPhase.ready : LoadPhase.error;
     }
     _safeNotify();
   }
@@ -157,6 +176,8 @@ class FeatureController extends ChangeNotifier {
           )
           .toList(growable: false);
       claimMessage = '+${result.rewardXp} XP CLAIMED';
+      _hasPersistentQuestData = true;
+      _scheduleCacheWrite();
       await loadStats(force: true);
     } on BackendFailure catch (error) {
       claimMessage = _featureMessage(error, 'CLAIM FAILED - TRY AGAIN');
@@ -194,13 +215,15 @@ class FeatureController extends ChangeNotifier {
   }
 
   Future<void> loadGuild({bool force = false}) async {
-    if (guildPhase == LoadPhase.loading ||
-        leaderboardPhase == LoadPhase.loading ||
-        (!force &&
-            guildPhase == LoadPhase.ready &&
-            leaderboardPhase == LoadPhase.ready)) {
+    await _ensureHydrated();
+    if (_disposed ||
+        guildPhase == LoadPhase.loading ||
+        leaderboardPhase == LoadPhase.loading) {
       return;
     }
+    _applyCachedLeaderboardSelection();
+    final requestedScope = leaderboardScope;
+    final requestedMetric = leaderboardMetric;
     guildPhase = LoadPhase.loading;
     leaderboardPhase = LoadPhase.loading;
     guildError = null;
@@ -209,8 +232,8 @@ class FeatureController extends ChangeNotifier {
     try {
       final result = await api.guildData(
         session.sessionToken,
-        leaderboardScope,
-        leaderboardMetric,
+        requestedScope,
+        requestedMetric,
       );
       final initialLeaderboard = result.leaderboard;
       if (initialLeaderboard == null) {
@@ -220,79 +243,124 @@ class FeatureController extends ChangeNotifier {
         );
       }
       guildData = result;
-      leaderboardData = initialLeaderboard;
+      _cachedLeaderboards[leaderboardCacheKey(
+            requestedScope,
+            requestedMetric,
+          )] =
+          initialLeaderboard;
+      _applyCachedLeaderboardSelection();
       guildPhase = LoadPhase.ready;
-      leaderboardPhase = LoadPhase.ready;
+      leaderboardPhase = leaderboardData == null
+          ? LoadPhase.idle
+          : LoadPhase.ready;
+      _scheduleCacheWrite();
     } on BackendFailure catch (error) {
-      guildPhase = LoadPhase.error;
       guildError = _featureMessage(error, 'GUILD DATA UNAVAILABLE - TRY AGAIN');
-      leaderboardPhase = LoadPhase.error;
       leaderboardError = _featureMessage(
         error,
         'LEADERBOARD UNAVAILABLE - TRY AGAIN',
       );
+      guildPhase = guildData == null ? LoadPhase.error : LoadPhase.ready;
+      leaderboardPhase = leaderboardData == null
+          ? LoadPhase.error
+          : LoadPhase.ready;
     } on Object {
-      guildPhase = LoadPhase.error;
       guildError = 'GUILD DATA UNAVAILABLE - TRY AGAIN';
-      leaderboardPhase = LoadPhase.error;
       leaderboardError = 'LEADERBOARD UNAVAILABLE - TRY AGAIN';
+      guildPhase = guildData == null ? LoadPhase.error : LoadPhase.ready;
+      leaderboardPhase = leaderboardData == null
+          ? LoadPhase.error
+          : LoadPhase.ready;
     }
     _safeNotify();
+    if (!_disposed &&
+        (leaderboardScope != requestedScope ||
+            leaderboardMetric != requestedMetric)) {
+      leaderboardError = null;
+      await loadLeaderboard(force: true);
+    }
   }
 
   Future<void> loadLeaderboard({bool force = false}) async {
-    if (leaderboardPhase == LoadPhase.loading ||
-        (!force && leaderboardPhase == LoadPhase.ready)) {
-      return;
-    }
+    await _ensureHydrated();
+    if (_disposed || leaderboardPhase == LoadPhase.loading) return;
+    _applyCachedLeaderboardSelection();
+    final requestedScope = leaderboardScope;
+    final requestedMetric = leaderboardMetric;
     leaderboardPhase = LoadPhase.loading;
     leaderboardError = null;
     _safeNotify();
     try {
-      leaderboardData = await api.leaderboard(
+      final result = await api.leaderboard(
         session.sessionToken,
-        leaderboardScope,
-        leaderboardMetric,
+        requestedScope,
+        requestedMetric,
       );
-      leaderboardPhase = LoadPhase.ready;
+      _cachedLeaderboards[leaderboardCacheKey(
+            requestedScope,
+            requestedMetric,
+          )] =
+          result;
+      _applyCachedLeaderboardSelection();
+      leaderboardPhase = leaderboardData == null
+          ? LoadPhase.idle
+          : LoadPhase.ready;
+      _scheduleCacheWrite();
     } on BackendFailure catch (error) {
-      leaderboardPhase = LoadPhase.error;
       leaderboardError = _featureMessage(
         error,
         'LEADERBOARD UNAVAILABLE - TRY AGAIN',
       );
+      leaderboardPhase = leaderboardData == null
+          ? LoadPhase.error
+          : LoadPhase.ready;
     } on Object {
-      leaderboardPhase = LoadPhase.error;
       leaderboardError = 'LEADERBOARD UNAVAILABLE - TRY AGAIN';
+      leaderboardPhase = leaderboardData == null
+          ? LoadPhase.error
+          : LoadPhase.ready;
     }
     _safeNotify();
+    if (!_disposed &&
+        (leaderboardScope != requestedScope ||
+            leaderboardMetric != requestedMetric)) {
+      leaderboardError = null;
+      await loadLeaderboard(force: true);
+    }
   }
 
   Future<void> selectLeaderboardScope(LeaderboardScope scope) async {
     if (scope == leaderboardScope) return;
     leaderboardScope = scope;
-    leaderboardPhase = LoadPhase.idle;
+    _applyCachedLeaderboardSelection();
+    leaderboardPhase = leaderboardData == null
+        ? LoadPhase.idle
+        : LoadPhase.ready;
+    _safeNotify();
     await loadLeaderboard(force: true);
   }
 
   Future<void> selectLeaderboardMetric(LeaderboardMetric metric) async {
     if (metric == leaderboardMetric) return;
     leaderboardMetric = metric;
-    leaderboardPhase = LoadPhase.idle;
+    _applyCachedLeaderboardSelection();
+    leaderboardPhase = leaderboardData == null
+        ? LoadPhase.idle
+        : LoadPhase.ready;
+    _safeNotify();
     await loadLeaderboard(force: true);
   }
 
   Future<void> loadActivities({bool force = false}) async {
-    if (activityPhase == LoadPhase.loading ||
-        (!force && activityPhase == LoadPhase.ready)) {
-      return;
-    }
+    await _ensureHydrated();
+    if (_disposed || activityPhase == LoadPhase.loading) return;
     activityPhase = LoadPhase.loading;
     activityError = null;
     activityWarning = null;
     _safeNotify();
     try {
       final ownerNik = session.nik;
+      final cached = activities;
       final values = await Future.wait<Object?>([
         activityStore.newestFirst(ownerNik),
         activityStore.totals(ownerNik),
@@ -300,28 +368,37 @@ class FeatureController extends ChangeNotifier {
       final local = values[0]! as List<FinalActivity>;
       final localIds = local.map((activity) => activity.activityId).toSet();
       List<ServerActivitySummary> backend = const [];
+      var backendLoaded = false;
       try {
         backend = await api.activityHistory(session.sessionToken);
+        backendLoaded = true;
       } on BackendFailure catch (error) {
         activityWarning = error.invalidatesSession
             ? 'SESSION EXPIRED - LOGIN AGAIN'
-            : 'SERVER HISTORY UNAVAILABLE - SHOWING DEVICE LOG';
+            : cached.isEmpty
+            ? 'SERVER HISTORY UNAVAILABLE - SHOWING DEVICE LOG'
+            : 'SERVER HISTORY UNAVAILABLE - SHOWING SAVED LOG';
       } on Object {
-        activityWarning = 'SERVER HISTORY UNAVAILABLE - SHOWING DEVICE LOG';
+        activityWarning = cached.isEmpty
+            ? 'SERVER HISTORY UNAVAILABLE - SHOWING DEVICE LOG'
+            : 'SERVER HISTORY UNAVAILABLE - SHOWING SAVED LOG';
       }
       if (session.nik != ownerNik) return;
-      activities = mergeActivityHistory(
-        ownerNik: ownerNik,
-        local: local,
-        backend: backend,
-      );
+      activities = backendLoaded
+          ? mergeActivityHistory(
+              ownerNik: ownerNik,
+              local: local,
+              backend: backend,
+            )
+          : _mergeCachedActivities(ownerNik, cached, local);
       localActivityIds = Set.unmodifiable(localIds);
       latestActivity = activities.isEmpty ? null : activities.first;
       activityTotals = values[1]! as ActivityTotals;
       activityPhase = LoadPhase.ready;
+      _scheduleCacheWrite();
     } on Object {
-      activityPhase = LoadPhase.error;
       activityError = 'ADVENTURE LOG UNAVAILABLE';
+      activityPhase = activities.isEmpty ? LoadPhase.error : LoadPhase.ready;
     }
     _safeNotify();
   }
@@ -416,6 +493,126 @@ class FeatureController extends ChangeNotifier {
     );
     if (removed) await loadActivities(force: true);
     return removed;
+  }
+
+  bool get isStatsRefreshing =>
+      statsPhase == LoadPhase.loading && stats != null;
+  bool get isQuestRefreshing =>
+      questPhase == LoadPhase.loading && _hasPersistentQuestData;
+  bool get isGuildRefreshing =>
+      guildPhase == LoadPhase.loading && guildData != null;
+  bool get isLeaderboardRefreshing =>
+      leaderboardPhase == LoadPhase.loading && leaderboardData != null;
+  bool get isActivityRefreshing =>
+      activityPhase == LoadPhase.loading && activities.isNotEmpty;
+
+  Future<void> _ensureHydrated() => _hydrateFuture ??= _hydrateFromCache();
+
+  Future<void> _hydrateFromCache() async {
+    final ownerNik = session.nik;
+    final snapshot = await cacheStore.read(ownerNik);
+    if (_disposed || session.nik != ownerNik || snapshot == null) return;
+    final cachedStats = snapshot.stats;
+    if (cachedStats != null &&
+        (cachedStats.nik.isEmpty || cachedStats.nik == ownerNik)) {
+      stats = cachedStats;
+      statsPhase = LoadPhase.ready;
+    }
+    if (snapshot.quests case final values?) {
+      quests = List.unmodifiable(values);
+      questsAreFallback = false;
+      _hasPersistentQuestData = true;
+      questPhase = LoadPhase.ready;
+    }
+    if (snapshot.guildData case final value?) {
+      guildData = value;
+      guildPhase = LoadPhase.ready;
+    }
+    _cachedLeaderboards
+      ..clear()
+      ..addAll(snapshot.leaderboards);
+    final guildLeaderboard = guildData?.leaderboard;
+    if (guildLeaderboard != null) {
+      _cachedLeaderboards.putIfAbsent(
+        leaderboardCacheKey(guildLeaderboard.scope, guildLeaderboard.metric),
+        () => guildLeaderboard,
+      );
+    }
+    _applyCachedLeaderboardSelection();
+    if (leaderboardData != null) leaderboardPhase = LoadPhase.ready;
+    if (snapshot.activities case final values?) {
+      activities = List.unmodifiable(
+        values.where((value) => value.ownerNik == ownerNik),
+      );
+      latestActivity = activities.isEmpty ? null : activities.first;
+      activityPhase = LoadPhase.ready;
+    }
+    _safeNotify();
+  }
+
+  void _applyCachedLeaderboardSelection() {
+    leaderboardData =
+        _cachedLeaderboards[leaderboardCacheKey(
+          leaderboardScope,
+          leaderboardMetric,
+        )];
+  }
+
+  void _scheduleCacheWrite() {
+    if (_disposed) return;
+    final ownerNik = session.nik;
+    final snapshot = FeatureCacheSnapshot(
+      ownerNik: ownerNik,
+      savedAtMillis: DateTime.now().millisecondsSinceEpoch,
+      stats: stats?.nik == ownerNik ? stats : null,
+      quests: _hasPersistentQuestData && !questsAreFallback
+          ? List.unmodifiable(quests)
+          : null,
+      guildData: guildData,
+      leaderboards: Map.unmodifiable(_cachedLeaderboards),
+      activities: List.unmodifiable(activities),
+    );
+    _cacheWriteQueue = _cacheWriteQueue
+        .then((_) async {
+          if (snapshot.ownerNik == ownerNik) await cacheStore.write(snapshot);
+        })
+        .catchError((Object _) {
+          // Persistent cache is optional; live backend state remains usable.
+        });
+  }
+
+  @visibleForTesting
+  Future<void> settleCacheWrites() => _cacheWriteQueue;
+
+  List<FinalActivity> _mergeCachedActivities(
+    String ownerNik,
+    List<FinalActivity> cached,
+    List<FinalActivity> local,
+  ) {
+    final merged = <String, FinalActivity>{
+      for (final item in cached.where((value) => value.ownerNik == ownerNik))
+        item.activityId: item,
+    };
+    for (final item in local.where((value) => value.ownerNik == ownerNik)) {
+      merged[item.activityId] =
+          merged[item.activityId]?.syncStatus == ActivitySyncStatus.synced
+          ? item.withSyncStatus(ActivitySyncStatus.synced)
+          : item;
+    }
+    final result = merged.values.toList(growable: false);
+    result.sort((a, b) {
+      final aTime = a.endDateTimeMillis > 0
+          ? a.endDateTimeMillis
+          : a.startDateTimeMillis;
+      final bTime = b.endDateTimeMillis > 0
+          ? b.endDateTimeMillis
+          : b.startDateTimeMillis;
+      final byTime = bTime.compareTo(aTime);
+      if (byTime != 0) return byTime;
+      final byCreated = b.createdAtMillis.compareTo(a.createdAtMillis);
+      return byCreated != 0 ? byCreated : b.activityId.compareTo(a.activityId);
+    });
+    return result;
   }
 
   String _featureMessage(BackendFailure error, String fallback) {

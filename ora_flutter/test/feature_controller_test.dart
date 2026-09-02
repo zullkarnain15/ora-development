@@ -8,6 +8,7 @@ import 'package:ora_flutter/features/activity/domain/activity_sync.dart';
 import 'package:ora_flutter/features/activity/domain/server_activity_summary.dart';
 import 'package:ora_flutter/features/auth/domain/auth_models.dart';
 import 'package:ora_flutter/features/dashboard/application/feature_controller.dart';
+import 'package:ora_flutter/features/dashboard/data/feature_cache_store.dart';
 import 'package:ora_flutter/features/dashboard/data/ora_feature_api.dart';
 import 'package:ora_flutter/features/dashboard/domain/feature_models.dart';
 
@@ -27,8 +28,10 @@ class _FakeFeatureApi implements OraFeatureApi {
     lastActivityAt: '',
     updatedAt: null,
   );
+  Completer<UserStats>? statsCompleter;
   List<Quest> publicQuests = const [];
   List<Quest> progressQuests = const [];
+  Completer<List<Quest>>? progressCompleter;
   BackendFailure? progressFailure;
   int progressCalls = 0;
   GuildData guild = const GuildData(
@@ -37,6 +40,7 @@ class _FakeFeatureApi implements OraFeatureApi {
     members: [],
     directory: [],
   );
+  Completer<GuildData>? guildCompleter;
   LeaderboardData board = const LeaderboardData(
     scope: LeaderboardScope.global,
     metric: LeaderboardMetric.totalXp,
@@ -44,6 +48,7 @@ class _FakeFeatureApi implements OraFeatureApi {
     entries: [],
     currentUserRank: null,
   );
+  Completer<LeaderboardData>? leaderboardCompleter;
   QuestClaim claim = const QuestClaim(
     questId: 'Q1',
     rewardXp: 10,
@@ -76,6 +81,8 @@ class _FakeFeatureApi implements OraFeatureApi {
   Completer<String>? submitCompleter;
   final submittedPayloads = <ActivityUploadPayload>[];
   List<ServerActivitySummary> backendActivities = const [];
+  Completer<List<ServerActivitySummary>>? activityHistoryCompleter;
+  int activityHistoryCalls = 0;
   BackendFailure? activityHistoryFailure;
 
   @override
@@ -89,7 +96,7 @@ class _FakeFeatureApi implements OraFeatureApi {
   @override
   Future<UserStats> userStats(String sessionToken) async {
     statsCalls++;
-    return stats;
+    return statsCompleter?.future ?? stats;
   }
 
   @override
@@ -101,6 +108,7 @@ class _FakeFeatureApi implements OraFeatureApi {
     guildCalls++;
     requestedScope = scope;
     requestedMetric = metric;
+    if (guildCompleter case final completer?) return completer.future;
     return GuildData(
       status: guild.status,
       guild: guild.guild,
@@ -119,14 +127,14 @@ class _FakeFeatureApi implements OraFeatureApi {
     leaderboardCalls++;
     requestedScope = scope;
     requestedMetric = metric;
-    return board;
+    return leaderboardCompleter?.future ?? board;
   }
 
   @override
   Future<List<Quest>> questProgress(String sessionToken) async {
     progressCalls++;
     if (progressFailure case final error?) throw error;
-    return progressQuests;
+    return progressCompleter?.future ?? progressQuests;
   }
 
   @override
@@ -162,8 +170,9 @@ class _FakeFeatureApi implements OraFeatureApi {
     int limit = 50,
     int offset = 0,
   }) async {
+    activityHistoryCalls++;
     if (activityHistoryFailure case final error?) throw error;
-    return backendActivities;
+    return activityHistoryCompleter?.future ?? backendActivities;
   }
 }
 
@@ -202,10 +211,71 @@ Quest _quest({
   claimBlockedReason: blocked,
 );
 
-FeatureController _controller(_FakeFeatureApi api) => FeatureController(
-  session: _session,
+FeatureController _controller(
+  _FakeFeatureApi api, {
+  FeatureCacheStore? cacheStore,
+  UserSession? session,
+}) => FeatureController(
+  session: session ?? _session,
   api: api,
   activityStore: MemoryActivityStore(),
+  cacheStore: cacheStore,
+);
+
+UserStats _stats(int totalXp, {String nik = '1001'}) => UserStats(
+  nik: nik,
+  nickname: 'RUNNER',
+  division: 'OPS',
+  totalActivities: totalXp ~/ 10,
+  totalDistanceKm: totalXp / 10,
+  totalDurationSec: totalXp.toDouble(),
+  totalXp: totalXp,
+  currentLevel: 1,
+  currentLevelName: 'ROOKIE',
+  nextLevelXp: 100,
+  lastActivityId: '',
+  lastActivityAt: '',
+  updatedAt: null,
+);
+
+LeaderboardData _board(int rank) => LeaderboardData(
+  scope: LeaderboardScope.global,
+  metric: LeaderboardMetric.totalXp,
+  status: 'ACTIVE',
+  entries: [
+    LeaderboardEntry(
+      rank: rank,
+      nik: _session.nik,
+      nickname: 'RUNNER',
+      division: 'OPS',
+      totalXp: 100,
+      totalDistanceKm: 10,
+      totalActivities: 2,
+      currentLevel: 1,
+      currentLevelName: 'ROOKIE',
+    ),
+  ],
+  currentUserRank: CurrentUserRank(rank: rank, metricValue: 100),
+);
+
+GuildData _guild(String name, LeaderboardData board) => GuildData(
+  status: 'ACTIVE',
+  guild: GuildSummary(
+    guildId: 'OPS',
+    guildName: name,
+    memberCount: 1,
+    activeMemberCount: 1,
+    totalDistanceKm: 10,
+    totalActivities: 2,
+    totalXp: 100,
+    currentLevel: 1,
+    currentLevelName: 'ROOKIE',
+    displayName: name,
+    description: '',
+  ),
+  members: const [],
+  directory: const [],
+  leaderboard: board,
 );
 
 FinalActivity _localActivity(
@@ -238,6 +308,13 @@ ServerActivitySummary _backendActivity(String id, {required int start}) =>
       source: 'ANDROID',
       syncedAt: DateTime.fromMillisecondsSinceEpoch(start + 2000, isUtc: true),
     );
+
+Future<void> _waitFor(bool Function() condition) async {
+  for (var attempt = 0; attempt < 20 && !condition(); attempt++) {
+    await Future<void>.delayed(Duration.zero);
+  }
+  expect(condition(), isTrue);
+}
 
 void main() {
   test('backend-only activity appears when local store is empty', () async {
@@ -675,4 +752,180 @@ void main() {
       expect(controller.leaderboardData?.currentUserRank, isNull);
     },
   );
+
+  test(
+    'cached Home and activity history render before refresh completes',
+    () async {
+      final cache = MemoryFeatureCacheStore();
+      await cache.write(
+        FeatureCacheSnapshot(
+          ownerNik: _session.nik,
+          savedAtMillis: 1,
+          stats: _stats(20),
+          activities: [
+            _localActivity(
+              'CACHED-RUN',
+              start: 1000,
+              syncStatus: ActivitySyncStatus.synced,
+            ),
+          ],
+        ),
+      );
+      final api = _FakeFeatureApi()
+        ..statsCompleter = Completer<UserStats>()
+        ..activityHistoryCompleter = Completer<List<ServerActivitySummary>>();
+      final controller = _controller(api, cacheStore: cache);
+
+      final refresh = controller.loadHome();
+      await _waitFor(
+        () => api.statsCalls == 1 && api.activityHistoryCalls == 1,
+      );
+
+      expect(controller.stats?.totalXp, 20);
+      expect(controller.latestActivity?.activityId, 'CACHED-RUN');
+      expect(controller.isStatsRefreshing, isTrue);
+      expect(controller.isActivityRefreshing, isTrue);
+
+      api.statsCompleter!.complete(_stats(80));
+      api.activityHistoryCompleter!.complete([
+        _backendActivity('FRESH-RUN', start: 5000),
+      ]);
+      await refresh;
+      expect(controller.stats?.totalXp, 80);
+      expect(controller.latestActivity?.activityId, 'FRESH-RUN');
+    },
+  );
+
+  test(
+    'cached Quest renders first and valid backend replaces persistence',
+    () async {
+      final cache = MemoryFeatureCacheStore();
+      await cache.write(
+        FeatureCacheSnapshot(
+          ownerNik: _session.nik,
+          savedAtMillis: 1,
+          quests: [_quest(progress: .2)],
+        ),
+      );
+      final api = _FakeFeatureApi()
+        ..progressCompleter = Completer<List<Quest>>();
+      final controller = _controller(api, cacheStore: cache);
+
+      final refresh = controller.loadQuests();
+      await _waitFor(() => api.progressCalls == 1);
+      expect(controller.quests.single.progress, .2);
+      expect(controller.isQuestRefreshing, isTrue);
+
+      api.progressCompleter!.complete([_quest(progress: .8)]);
+      await refresh;
+      await controller.settleCacheWrites();
+      expect(controller.quests.single.progress, .8);
+      expect((await cache.read(_session.nik))?.quests?.single.progress, .8);
+    },
+  );
+
+  test(
+    'cached Guild and Leaderboard render before backend completes',
+    () async {
+      final cache = MemoryFeatureCacheStore();
+      final cachedBoard = _board(4);
+      await cache.write(
+        FeatureCacheSnapshot(
+          ownerNik: _session.nik,
+          savedAtMillis: 1,
+          guildData: _guild('CACHED GUILD', cachedBoard),
+          leaderboards: {
+            leaderboardCacheKey(
+              LeaderboardScope.global,
+              LeaderboardMetric.totalXp,
+            ): cachedBoard,
+          },
+        ),
+      );
+      final api = _FakeFeatureApi()..guildCompleter = Completer<GuildData>();
+      final controller = _controller(api, cacheStore: cache);
+
+      final refresh = controller.loadGuild();
+      await _waitFor(() => api.guildCalls == 1);
+      expect(controller.guildData?.guild?.resolvedName, 'CACHED GUILD');
+      expect(controller.leaderboardData?.currentUserRank?.rank, 4);
+      expect(controller.isGuildRefreshing, isTrue);
+      expect(controller.isLeaderboardRefreshing, isTrue);
+
+      final freshBoard = _board(1);
+      api.guildCompleter!.complete(_guild('FRESH GUILD', freshBoard));
+      await refresh;
+      expect(controller.guildData?.guild?.resolvedName, 'FRESH GUILD');
+      expect(controller.leaderboardData?.currentUserRank?.rank, 1);
+    },
+  );
+
+  test('backend failure keeps cached data with non-blocking warning', () async {
+    final cache = MemoryFeatureCacheStore();
+    await cache.write(
+      FeatureCacheSnapshot(
+        ownerNik: _session.nik,
+        savedAtMillis: 1,
+        quests: [_quest(progress: .6)],
+      ),
+    );
+    final api = _FakeFeatureApi()
+      ..progressFailure = const BackendFailure(
+        BackendFailureKind.connection,
+        'offline',
+      );
+    final controller = _controller(api, cacheStore: cache);
+
+    await controller.loadQuests();
+
+    expect(controller.questPhase, LoadPhase.ready);
+    expect(controller.quests.single.progress, .6);
+    expect(controller.questsAreFallback, isFalse);
+    expect(controller.questError, contains('SAVED DATA'));
+  });
+
+  test('owner-scoped cache does not leak after account switch', () async {
+    final cache = MemoryFeatureCacheStore();
+    await cache.write(
+      FeatureCacheSnapshot(
+        ownerNik: _session.nik,
+        savedAtMillis: 1,
+        quests: [_quest(progress: .9)],
+      ),
+    );
+    final otherSession = UserSession(
+      sessionToken: 'other-session',
+      nik: '2002',
+      nickname: 'OTHER',
+      divisionGuild: 'SALES',
+      status: 'ACTIVE',
+      expiresAt: DateTime.utc(2030),
+    );
+    final api = _FakeFeatureApi()..progressCompleter = Completer<List<Quest>>();
+    final controller = _controller(
+      api,
+      cacheStore: cache,
+      session: otherSession,
+    );
+
+    final refresh = controller.loadQuests();
+    await _waitFor(() => api.progressCalls == 1);
+    expect(controller.quests, isEmpty);
+    expect(
+      featureCacheKeyForOwner(_session.nik),
+      isNot(featureCacheKeyForOwner(otherSession.nik)),
+    );
+    api.progressCompleter!.complete(const []);
+    await refresh;
+  });
+
+  test('force refresh always calls backend', () async {
+    final api = _FakeFeatureApi()..progressQuests = [_quest(progress: .1)];
+    final controller = _controller(api);
+
+    await controller.loadQuests();
+    await controller.loadQuests(force: true);
+
+    expect(api.progressCalls, 2);
+  });
 }

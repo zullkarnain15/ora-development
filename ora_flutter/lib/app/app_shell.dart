@@ -121,6 +121,8 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
       featureController.updateSession(widget.session);
       trackingController.updateUser(widget.session);
       unawaited(featureController.loadHome(force: true));
+      unawaited(featureController.loadQuests(force: true));
+      unawaited(featureController.loadGuild(force: true));
     }
   }
 

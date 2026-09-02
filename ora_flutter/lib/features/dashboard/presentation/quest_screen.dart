@@ -85,6 +85,16 @@ class _QuestScreenState extends State<QuestScreen> {
                 ),
               ],
             ),
+            if (widget.controller.isQuestRefreshing ||
+                (widget.controller.questPhase == LoadPhase.ready &&
+                    widget.controller.questError != null)) ...[
+              const SizedBox(height: 10),
+              OraRefreshStatus(
+                key: const Key('quest_refresh_status'),
+                refreshing: widget.controller.isQuestRefreshing,
+                warning: widget.controller.questError,
+              ),
+            ],
             const SizedBox(height: 16),
             if (widget.controller.questPhase == LoadPhase.loading &&
                 widget.controller.quests.isEmpty)

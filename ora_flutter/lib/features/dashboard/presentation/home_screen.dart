@@ -40,6 +40,20 @@ class HomeScreen extends StatelessWidget {
                 subtitle: 'OTO RUNNERS ADVENTURE',
                 assetName: 'oto_runners.PNG',
               ),
+              if (controller.isStatsRefreshing ||
+                  controller.isActivityRefreshing ||
+                  (controller.stats != null && controller.statsError != null) ||
+                  (controller.activities.isNotEmpty &&
+                      controller.activityWarning != null)) ...[
+                const SizedBox(height: 10),
+                OraRefreshStatus(
+                  key: const Key('home_refresh_status'),
+                  refreshing:
+                      controller.isStatsRefreshing ||
+                      controller.isActivityRefreshing,
+                  warning: controller.statsError ?? controller.activityWarning,
+                ),
+              ],
               const SizedBox(height: 24),
               Text('WELCOME,', style: Theme.of(context).textTheme.bodyMedium),
               const SizedBox(height: 6),

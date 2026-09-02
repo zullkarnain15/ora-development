@@ -49,6 +49,16 @@ class _GuildScreenState extends State<GuildScreen> {
                 ),
               ],
             ),
+            if (widget.controller.isGuildRefreshing ||
+                (widget.controller.guildData != null &&
+                    widget.controller.guildError != null)) ...[
+              const SizedBox(height: 10),
+              OraRefreshStatus(
+                key: const Key('guild_refresh_status'),
+                refreshing: widget.controller.isGuildRefreshing,
+                warning: widget.controller.guildError,
+              ),
+            ],
             const SizedBox(height: 14),
             SegmentedButton<GuildView>(
               segments: const [
@@ -249,6 +259,16 @@ class _GuildScreenState extends State<GuildScreen> {
         if (controller.leaderboardPhase == LoadPhase.loading &&
             controller.leaderboardData != null) ...[
           const _LeaderboardLoadingBanner(),
+          const SizedBox(height: 12),
+        ],
+        if (controller.leaderboardPhase == LoadPhase.ready &&
+            controller.leaderboardData != null &&
+            controller.leaderboardError != null) ...[
+          OraRefreshStatus(
+            key: const Key('leaderboard_refresh_warning'),
+            refreshing: false,
+            warning: controller.leaderboardError,
+          ),
           const SizedBox(height: 12),
         ],
         if (controller.leaderboardPhase == LoadPhase.loading &&

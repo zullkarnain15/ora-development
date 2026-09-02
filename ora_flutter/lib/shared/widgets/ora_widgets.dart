@@ -117,6 +117,55 @@ class PixelBadge extends StatelessWidget {
   );
 }
 
+class OraRefreshStatus extends StatelessWidget {
+  const OraRefreshStatus({super.key, required this.refreshing, this.warning});
+
+  final bool refreshing;
+  final String? warning;
+
+  @override
+  Widget build(BuildContext context) {
+    final message = warning?.trim();
+    if (!refreshing && (message == null || message.isEmpty)) {
+      return const SizedBox.shrink();
+    }
+    final hasWarning = message != null && message.isNotEmpty;
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
+      decoration: BoxDecoration(
+        color: OraColors.panelAlt,
+        borderRadius: BorderRadius.circular(4),
+        border: Border.all(
+          color: hasWarning ? OraColors.orange : OraColors.outline,
+        ),
+      ),
+      child: Row(
+        children: [
+          if (refreshing) ...[
+            const SizedBox.square(
+              dimension: 13,
+              child: CircularProgressIndicator(strokeWidth: 2),
+            ),
+            const SizedBox(width: 8),
+          ] else ...[
+            const Icon(Icons.warning_amber, size: 16, color: OraColors.orange),
+            const SizedBox(width: 8),
+          ],
+          Expanded(
+            child: Text(
+              hasWarning ? message : 'SYNCING...',
+              style: TextStyle(
+                fontSize: 10,
+                color: hasWarning ? OraColors.orange : OraColors.creamMuted,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
 class OraStatLine extends StatelessWidget {
   const OraStatLine({
     super.key,
