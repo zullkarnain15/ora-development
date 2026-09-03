@@ -34,6 +34,7 @@
 # Local Google Apps Script / clasp configuration
 /ORA/backend/.clasp.json
 **/.clasprc.json
+**/TEMP_APPS_SCRIPT_*/
 
 # Operating system files
 .DS_Store
@@ -41,6 +42,7 @@ Thumbs.db
 
 # Workspace-only source assets
 ICON/
+/ora_flutter/assets_source/
 
 # Local Garmin development workspace
 /ora_garmin/

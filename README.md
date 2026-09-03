@@ -1,11 +1,31 @@
 # ORA — OTO Runners Adventure
 
-This private repository contains the ORA migration workspace:
+Production monorepo for ORA:
 
-- `ORA/`: Android reference implementation and Apps Script backend.
-- `ora_flutter/`: shared Flutter application for Android and Web/PWA.
+- `ORA/backend/`: Google Apps Script backend and its Node regression tests.
+- `ora_flutter/`: Flutter application for Android and Web/PWA.
+- `.github/workflows/deploy-pwa.yml`: validation and GitHub Pages deployment.
 
-Generated APK/AAB files, build caches, local SDK paths, credentials, and signing keys are intentionally excluded from version control.
+Legacy Android source, unsupported Flutter platform scaffolds, generated builds,
+local workspaces, credentials, and signing keys are intentionally excluded from
+version control.
+
+## Validation
+
+Run backend regression tests from the repository root:
+
+```sh
+node ORA/backend/shared_activity_import_test.cjs
+node ORA/backend/strava_sync_test.cjs
+```
+
+Run Flutter validation from `ora_flutter/`:
+
+```sh
+flutter pub get
+flutter analyze
+flutter test
+```
 
 ## Web/PWA development
 
